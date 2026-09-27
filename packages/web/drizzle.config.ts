@@ -5,18 +5,13 @@ import { defineConfig } from 'drizzle-kit';
 //
 // To add or change a column:
 //   1. Edit src/server/schema.ts
-//   2. Run:  pnpm db:generate    (creates a new migration file in ./migrations/)
+//   2. Run:  pnpm db:generate    (creates a new migration file in ./migrations-pg/)
 //   3. Commit the migration file alongside the schema change
 //   4. On next startup the server applies all pending migrations automatically
-//      (migrate() is called in getDb() before any queries run)
+//      (initDb() is awaited in index.ts before any queries run)
 
 export default defineConfig({
-  dialect: 'sqlite',
+  dialect: 'postgresql',
   schema: './src/server/schema.ts',
-  out: './migrations',
-  dbCredentials: {
-    url: process.env.DATA_DIR
-      ? `${process.env.DATA_DIR}/percussionist.db`
-      : './data/percussionist.db',
-  },
+  out: './migrations-pg',
 });

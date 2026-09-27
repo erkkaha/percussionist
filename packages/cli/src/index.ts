@@ -98,7 +98,12 @@ function withDeployOptions(cmd: Command): Command {
       'skip TLS setup (no cert, no default-cert wiring, no port pinning)',
       false,
     )
-    .option('--tls-secret <ns>/<name>', 'TLS Secret name (default: percussionist-tls-wildcard)');
+    .option('--tls-secret <ns>/<name>', 'TLS Secret name (default: percussionist-tls-wildcard)')
+    .option('--database-url <url>', 'PostgreSQL URL for the percussionist-db Secret')
+    .option(
+      '--database-storage-class <name>',
+      'StorageClass for the bundled PostgreSQL PVC (default: the cluster default class)',
+    );
 }
 
 withDeployOptions(program.command('deploy')).action(runDeploy);

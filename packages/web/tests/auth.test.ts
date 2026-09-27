@@ -12,20 +12,15 @@
 // Uses app.request() (no port binding) against the full Hono app built by
 // createApp(). The K8s client is lazy — it only initialises on the first
 // request that needs it.
+//
+// A real PGlite database backs the run: the "wrong token" cases below still
+// reach better-auth's key verification (to tell 401 from 403), and that builds
+// the drizzle adapter over getDb() — which throws when nothing is injected.
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { createApp, redactTokenParam } from '../src/server/app.js';
-import { closeDb } from '../src/server/db.js';
 import { resetAuth } from '../src/server/lib/better-auth.js';
-
-// ---------------------------------------------------------------------------
-// Test DB isolation
-
-const TEST_DATA_DIR = join('/tmp', `percussionist-auth-${Date.now()}`);
-
-process.env.DATA_DIR = TEST_DATA_DIR;
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 // Use a known secret for testing.
 process.env.AUTH_SECRET = 'test-secret-token-12345';
@@ -49,14 +44,13 @@ function _json(path: string, body: unknown, method = 'POST') {
   });
 }
 
-beforeAll(() => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
+beforeAll(async () => {
+  await createTestDb();
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeTestDb();
   resetAuth();
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 
 // ===========================================================================

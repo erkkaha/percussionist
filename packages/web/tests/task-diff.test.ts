@@ -6,18 +6,14 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { DEFAULT_EXEC_IMAGE, type DiffFinding, type Project, type Task } from '@percussionist/api';
 import type { Hono } from 'hono';
 import * as kube from '../src/server/kube.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 // ---------------------------------------------------------------------------
 // Test environment
 
-const TEST_DATA_DIR = join('/tmp', `percussionist-task-diff-${Date.now()}`);
-
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.AUTH_DISABLED = '1';
 
 const BASE_SHA = 'base0000000000000000000000000000000000000';
@@ -146,7 +142,7 @@ let getTaskSpy: ReturnType<typeof spyOn>;
 let fetchSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
+  await createTestDb();
 
   getProjectSpy = spyOn(kube, 'getProject').mockResolvedValue(MOCK_PROJECT);
   getTaskSpy = spyOn(kube, 'getTask').mockResolvedValue(makeTask());
@@ -158,9 +154,8 @@ beforeAll(async () => {
   app = createApp();
 });
 
-afterAll(() => {
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
+afterAll(async () => {
+  await closeTestDb();
   delete process.env.AUTH_DISABLED;
   getProjectSpy.mockRestore();
   getTaskSpy.mockRestore();

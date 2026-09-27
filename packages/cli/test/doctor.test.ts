@@ -11,6 +11,7 @@
 //      health) is driven directly with stubbed API clients and injected probes
 //      to pin the pass/warn/fail mapping, including the documented edge cases
 //      (unknown CNI → warning, Pending PVC → warning, Lost/Failed → error,
+//      missing postgres StatefulSet → warning, unready StatefulSet → error,
 //      missing optional secrets → warning, dev-mode providers → warning,
 //      `--probe-dns` exec failure → warning).
 //   2. Orchestrator tests — `runDoctor` is exercised with an injected check
@@ -187,6 +188,13 @@ const WEB_HOST = 'app.192.168.49.2.nip.io';
 
 function secretDataFor(name: string): Record<string, string> {
   switch (name) {
+    case 'percussionist-db':
+      return {
+        url: btoa('postgresql://percussionist:secret@percussionist-postgres/percussionist'),
+        username: btoa('percussionist'),
+        password: btoa('secret'),
+        database: btoa('percussionist'),
+      };
     case 'operator-api-key':
     case 'manager-api-key':
     case 'manager-mcp-token':
@@ -259,6 +267,10 @@ function healthyClients(): DoctorClients {
     apps: {
       listNamespacedDaemonSet: async () => ({ items: [{ metadata: { name: 'calico-node' } }] }),
       readNamespacedDeployment: async ({ name }) => deploymentFor(name as string),
+      readNamespacedStatefulSet: async ({ name }) => ({
+        metadata: { name },
+        status: { readyReplicas: 1 },
+      }),
     },
     custom: {
       listClusterCustomObject: async () => ({ items: [] }),
@@ -1031,6 +1043,17 @@ describe('checkDns', () => {
 // storage
 
 describe('checkStorage', () => {
+  const operatorDeployment = () => ({
+    metadata: { name: 'percussionist-operator' },
+    spec: {
+      template: {
+        spec: {
+          containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
+        },
+      },
+    },
+  });
+
   const healthyStorageClients = () =>
     makeClients({
       storage: {
@@ -1046,6 +1069,10 @@ describe('checkStorage', () => {
         }),
       },
       core: {
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
         readNamespacedPersistentVolumeClaim: async ({ name }) => ({
           metadata: { name },
           status: { phase: 'Bound' },
@@ -1053,26 +1080,23 @@ describe('checkStorage', () => {
       },
       custom: { listClusterCustomObject: async () => ({ items: [] }) },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
         }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
-  it('passes when a default StorageClass exists and PVCs are Bound', async () => {
+  it('passes when a default StorageClass exists, postgres is ready and PVCs are Bound', async () => {
     const result = await checkStorage(healthyStorageClients(), NS, 100);
     expect(result.status).toBe('pass');
-    expect(result.message).toBe('default StorageClass present; web and project data PVCs Bound');
+    expect(result.message).toBe(
+      'default StorageClass present; percussionist-postgres ready; project data PVCs Bound',
+    );
   });
 
-  it('warns when the web PVC is Pending (provisioning in progress)', async () => {
+  it('warns, never fails, when the postgres StatefulSet is missing (external database)', async () => {
     const clients = makeClients({
       storage: {
         listStorageClass: async () => ({
@@ -1087,29 +1111,112 @@ describe('checkStorage', () => {
         }),
       },
       core: {
-        readNamespacedPersistentVolumeClaim: async () => ({
-          metadata: { name: 'percussionist-web-db-v3' },
-          status: { phase: 'Pending' },
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
+        readNamespacedPersistentVolumeClaim: async ({ name }) => ({
+          metadata: { name },
+          status: { phase: 'Bound' },
         }),
       },
       custom: { listClusterCustomObject: async () => ({ items: [] }) },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
-        }),
+        readNamespacedStatefulSet: async () => {
+          throw new Error('not found');
+        },
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
     const result = await checkStorage(clients, NS, 100);
     expect(result.status).toBe('warn');
-    expect(result.detail).toContain('PVC percussionist/percussionist-web-db-v3 is Pending');
+    expect(result.message).toBe('storage provisioned with warnings');
+    expect(result.detail).toContain('StatefulSet percussionist/percussionist-postgres missing');
+    expect(result.detail).toContain('expected when the web database is external');
+  });
+
+  it('fails when the postgres StatefulSet is present but not ready', async () => {
+    const clients = makeClients({
+      storage: {
+        listStorageClass: async () => ({
+          items: [
+            {
+              metadata: {
+                name: 'standard',
+                annotations: { 'storageclass.kubernetes.io/is-default-class': 'true' },
+              },
+            },
+          ],
+        }),
+      },
+      core: {
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
+        readNamespacedPersistentVolumeClaim: async ({ name }) => ({
+          metadata: { name },
+          status: { phase: 'Bound' },
+        }),
+      },
+      custom: { listClusterCustomObject: async () => ({ items: [] }) },
+      apps: {
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 0 },
+        }),
+        readNamespacedDeployment: async () => operatorDeployment(),
+      },
+    });
+
+    const result = await checkStorage(clients, NS, 100);
+    expect(result.status).toBe('fail');
+    expect(result.message).toBe('1 storage problem(s)');
+    expect(result.detail).toContain(
+      'StatefulSet percussionist/percussionist-postgres not ready (readyReplicas=0)',
+    );
+  });
+
+  it('fails when the db Secret lacks the keys the postgres StatefulSet consumes', async () => {
+    const clients = makeClients({
+      storage: {
+        listStorageClass: async () => ({
+          items: [
+            {
+              metadata: {
+                name: 'standard',
+                annotations: { 'storageclass.kubernetes.io/is-default-class': 'true' },
+              },
+            },
+          ],
+        }),
+      },
+      core: {
+        // External-DB style Secret: `url` only. The StatefulSet also needs
+        // username/password/database as POSTGRES_* env.
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: { url: btoa('postgresql://host/db') },
+        }),
+        readNamespacedPersistentVolumeClaim: async ({ name }) => ({
+          metadata: { name },
+          status: { phase: 'Bound' },
+        }),
+      },
+      custom: { listClusterCustomObject: async () => ({ items: [] }) },
+      apps: {
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
+        }),
+        readNamespacedDeployment: async () => operatorDeployment(),
+      },
+    });
+
+    const result = await checkStorage(clients, NS, 100);
+    expect(result.status).toBe('fail');
+    expect(result.detail).toContain('username, password, database');
   });
 
   it('errors when a project data PVC is Failed', async () => {
@@ -1127,6 +1234,10 @@ describe('checkStorage', () => {
         }),
       },
       core: {
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
         readNamespacedPersistentVolumeClaim: async ({ name }) => ({
           metadata: { name },
           status: { phase: name === 'demo-data' ? 'Failed' : 'Bound' },
@@ -1138,16 +1249,11 @@ describe('checkStorage', () => {
         }),
       },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
         }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
@@ -1171,6 +1277,10 @@ describe('checkStorage', () => {
         }),
       },
       core: {
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
         readNamespacedPersistentVolumeClaim: async ({ name }) => ({
           metadata: { name },
           status: { phase: name === 'demo-data' ? 'Lost' : 'Bound' },
@@ -1182,16 +1292,11 @@ describe('checkStorage', () => {
         }),
       },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
         }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
@@ -1215,6 +1320,10 @@ describe('checkStorage', () => {
         }),
       },
       core: {
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
         readNamespacedPersistentVolumeClaim: async ({ name }) => ({
           metadata: { name },
           status: { phase: name === 'demo-data' ? 'Pending' : 'Bound' },
@@ -1226,16 +1335,11 @@ describe('checkStorage', () => {
         }),
       },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
         }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
@@ -1244,7 +1348,7 @@ describe('checkStorage', () => {
     expect(result.detail).toContain('PVC percussionist/demo-data is Pending');
   });
 
-  it('fails when a PVC is missing', async () => {
+  it('fails when a project data PVC is missing', async () => {
     const clients = makeClients({
       storage: {
         listStorageClass: async () => ({
@@ -1259,28 +1363,28 @@ describe('checkStorage', () => {
         }),
       },
       core: {
-        readNamespacedPersistentVolumeClaim: async () => {
-          throw new Error('not found');
+        readNamespacedPersistentVolumeClaim: async ({ name }) => {
+          if (name === 'demo-data') throw new Error('not found');
+          return { metadata: { name }, status: { phase: 'Bound' } };
         },
       },
-      custom: { listClusterCustomObject: async () => ({ items: [] }) },
-      apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+      custom: {
+        listClusterCustomObject: async () => ({
+          items: [{ metadata: { name: 'demo', namespace: NS }, spec: {} }],
         }),
+      },
+      apps: {
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
+        }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
     const result = await checkStorage(clients, NS, 100);
     expect(result.status).toBe('fail');
-    expect(result.detail).toContain('PVC percussionist/percussionist-web-db-v3 missing');
+    expect(result.detail).toContain('PVC percussionist/demo-data missing for project demo');
   });
 
   it('warns when no StorageClass is marked default', async () => {
@@ -1291,23 +1395,22 @@ describe('checkStorage', () => {
         }),
       },
       core: {
-        readNamespacedPersistentVolumeClaim: async () => ({
-          metadata: { name: 'percussionist-web-db-v3' },
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
+        readNamespacedPersistentVolumeClaim: async ({ name }) => ({
+          metadata: { name },
           status: { phase: 'Bound' },
         }),
       },
       custom: { listClusterCustomObject: async () => ({ items: [] }) },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
         }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
@@ -1324,23 +1427,22 @@ describe('checkStorage', () => {
         }),
       },
       core: {
-        readNamespacedPersistentVolumeClaim: async () => ({
-          metadata: { name: 'percussionist-web-db-v3' },
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
+        readNamespacedPersistentVolumeClaim: async ({ name }) => ({
+          metadata: { name },
           status: { phase: 'Bound' },
         }),
       },
       custom: { listClusterCustomObject: async () => ({ items: [] }) },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
         }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
@@ -1382,6 +1484,10 @@ describe('checkStorage', () => {
         }),
       },
       core: {
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
         readNamespacedPersistentVolumeClaim: async ({ name }) => {
           readPvcNames.push(name as string);
           return { metadata: { name }, status: { phase: 'Bound' } };
@@ -1398,16 +1504,11 @@ describe('checkStorage', () => {
         }),
       },
       apps: {
-        readNamespacedDeployment: async () => ({
-          metadata: { name: 'percussionist-operator' },
-          spec: {
-            template: {
-              spec: {
-                containers: [{ env: [{ name: 'DEFAULT_STORAGE_CLASS', value: 'standard' }] }],
-              },
-            },
-          },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
         }),
+        readNamespacedDeployment: async () => operatorDeployment(),
       },
     });
 
@@ -1415,6 +1516,48 @@ describe('checkStorage', () => {
     expect(result.status).toBe('pass');
     expect(readPvcNames).toContain('custom-data');
     expect(readPvcNames).not.toContain('demo-data');
+  });
+
+  // The web database is PostgreSQL; the deleted percussionist-web-db-v3 PVC must
+  // never be read again.
+  it('no longer reads the deleted percussionist-web-db-v3 web PVC', async () => {
+    const readPvcNames: string[] = [];
+    const clients = makeClients({
+      storage: {
+        listStorageClass: async () => ({
+          items: [
+            {
+              metadata: {
+                name: 'standard',
+                annotations: { 'storageclass.kubernetes.io/is-default-class': 'true' },
+              },
+            },
+          ],
+        }),
+      },
+      core: {
+        readNamespacedSecret: async ({ name }) => ({
+          metadata: { name },
+          data: secretDataFor(name),
+        }),
+        readNamespacedPersistentVolumeClaim: async ({ name }) => {
+          readPvcNames.push(name as string);
+          return { metadata: { name }, status: { phase: 'Bound' } };
+        },
+      },
+      custom: { listClusterCustomObject: async () => ({ items: [] }) },
+      apps: {
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 1 },
+        }),
+        readNamespacedDeployment: async () => operatorDeployment(),
+      },
+    });
+
+    const result = await checkStorage(clients, NS, 100);
+    expect(result.status).toBe('pass');
+    expect(readPvcNames).not.toContain('percussionist-web-db-v3');
   });
 });
 
@@ -1449,7 +1592,13 @@ describe('checkCredentials', () => {
     const clients = makeClients({
       core: {
         readNamespacedSecret: async ({ name }) => {
-          const required = ['operator-api-key', 'manager-api-key', 'manager-mcp-token', 'web-auth'];
+          const required = [
+            'percussionist-db',
+            'operator-api-key',
+            'manager-api-key',
+            'manager-mcp-token',
+            'web-auth',
+          ];
           if (!required.includes(name as string)) throw new Error('not found');
           return { metadata: { name }, data: secretDataFor(name as string) };
         },
@@ -2257,8 +2406,9 @@ describe('runDoctor', () => {
 
   it('reports a degraded cluster with mixed statuses and exit 1', async () => {
     // Every check except network-policy (warning) fails: missing CRD, missing
-    // SA, non-Available CoreDNS, Failed web PVC, missing manager-api-key,
-    // zero connected providers, no models, no WEB_BASE_URL, unhealthy operator.
+    // SA, non-Available CoreDNS, unready postgres StatefulSet, missing
+    // manager-api-key, zero connected providers, no models, no WEB_BASE_URL,
+    // unhealthy operator.
     const degradedClients = makeClients({
       apiextensions: {
         listCustomResourceDefinition: async () => ({
@@ -2273,9 +2423,9 @@ describe('runDoctor', () => {
         }),
         readNamespacedService: async ({ name }) => ({ metadata: { name } }),
         readNamespacedEndpoints: async () => ({ subsets: [{ addresses: [{ ip: '10.0.0.1' }] }] }),
-        readNamespacedPersistentVolumeClaim: async () => ({
-          metadata: { name: 'percussionist-web-db-v3' },
-          status: { phase: 'Failed' },
+        readNamespacedPersistentVolumeClaim: async ({ name }) => ({
+          metadata: { name },
+          status: { phase: 'Bound' },
         }),
         readNamespacedSecret: async ({ name }) => {
           if (name === 'manager-api-key') throw new Error('not found');
@@ -2298,6 +2448,10 @@ describe('runDoctor', () => {
           }
           return { metadata: { name }, status: { availableReplicas: 1, readyReplicas: 1 } };
         },
+        readNamespacedStatefulSet: async ({ name }) => ({
+          metadata: { name },
+          status: { readyReplicas: 0 },
+        }),
       },
       custom: { listClusterCustomObject: async () => ({ items: [] }) },
       networking: {

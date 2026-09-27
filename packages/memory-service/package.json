@@ -14,15 +14,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "bun test"
+    "db:generate": "drizzle-kit generate",
+    "test": "bun test --isolate"
   },
   "dependencies": {
     "@percussionist/api": "workspace:*",
-    "sqlite-vec": "0.1.9"
+    "drizzle-orm": "0.45.2",
+    "pg": "8.23.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-pgvector": "0.0.9",
     "@types/bun": "1.4.2",
     "@types/node": "26.2.0",
-    "bun-types": "1.4.0"
+    "@types/pg": "8.23.1",
+    "bun-types": "1.4.0",
+    "drizzle-kit": "0.31.10"
   }
 }

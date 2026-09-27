@@ -672,7 +672,7 @@ const TOOLS = [
     description:
       'List task lifecycle events from the audit log. Events include phase transitions, ' +
       'review verdicts, failures, and manual actions. Events are recorded by the reconciler ' +
-      "and persisted to the web server's SQLite database.",
+      "and persisted to the web server's PostgreSQL database.",
     inputSchema: {
       type: 'object',
       properties: {

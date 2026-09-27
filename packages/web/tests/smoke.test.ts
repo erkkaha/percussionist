@@ -1,26 +1,20 @@
 // smoke.test.ts — integration smoke tests for the real Hono app.
 //
 // Uses app.request() (no port binding) against the full app built by
-// createApp(). The K8s client and stats DB are both lazy — they only
-// initialise on the first request that needs them.
+// createApp(). The K8s client is lazy — it only initialises on the first
+// request that needs it.
 //
-// DATA_DIR is set to a temp directory before any request fires, so getDb()
-// creates a fresh in-memory-equivalent DB for each test run.
+// A real in-memory PGlite (migrations-pg applied) backs the run, installed
+// before the first DB-backed request because getDb() is lazy.
 
 import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { createApp } from '../src/server/app.js';
-import { closeDb } from '../src/server/db.js';
 import { resetAuth } from '../src/server/lib/better-auth.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
-// ---------------------------------------------------------------------------
-// Test DB isolation — must be set before the first app.request() call that
-// hits a DB-backed route, because getDb() is lazy.
-
-const TEST_DATA_DIR = join('/tmp', `percussionist-smoke-${Date.now()}`);
-
-process.env.DATA_DIR = TEST_DATA_DIR;
+// A real in-memory PGlite (migrations-pg applied) backs the run, installed in
+// beforeAll — before the first app.request() that hits a DB-backed route,
+// because getDb() is lazy.
 
 // Save and restore AUTH_DISABLED so auth.test.ts is not affected by this test.
 const _prevAuthDisabled = process.env.AUTH_DISABLED;
@@ -42,15 +36,13 @@ function json(path: string, body: unknown, method = 'POST') {
   });
 }
 
-beforeAll(() => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
+beforeAll(async () => {
+  await createTestDb();
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeTestDb();
   resetAuth();
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
   if (_prevAuthDisabled !== undefined) {
     process.env.AUTH_DISABLED = _prevAuthDisabled;
   } else {
@@ -69,6 +61,13 @@ describe('health', () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.ok).toBe(true);
   });
+
+  it('GET /api/ready → 200', async () => {
+    const res = await req('/api/ready');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+  });
 });
 
 // ===========================================================================
@@ -76,7 +75,7 @@ describe('health', () => {
 // ===========================================================================
 // Board state is backed by K8s Task CRs. Without a live cluster, CRUD
 // operations return 5xx K8s errors. These tests verify routes are wired
-// correctly (not 404) and that SQLite-backed event endpoints work.
+// correctly (not 404) and that the DB-backed event endpoints work.
 
 const PROJECT = 'smoke-test-proj';
 

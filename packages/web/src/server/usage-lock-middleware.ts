@@ -20,8 +20,8 @@ export function isCachedLocked(): boolean {
  * Middleware that rejects authenticated requests with 423 Locked when the
  * daily usage limit has been reached and lockOnMax is enabled.
  *
- * Exempt routes: /api/usage/*, /api/auth/*, /api/health, /login, /api/settings
- * (and static).
+ * Exempt routes: /api/usage/*, /api/auth/*, /api/health, /api/ready, /login,
+ * /api/settings (and static).
  */
 export function usageLockMiddleware(): MiddlewareHandler {
   return async (c, next) => {
@@ -33,6 +33,7 @@ export function usageLockMiddleware(): MiddlewareHandler {
       // the lock cannot be lifted from the UI.
       url.startsWith('/api/auth/') ||
       url === '/api/health' ||
+      url === '/api/ready' ||
       url === '/login' ||
       url.startsWith('/api/settings')
     ) {

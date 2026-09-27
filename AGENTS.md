@@ -54,13 +54,19 @@ Bypass hooks with `--no-verify` (rarely needed).
 
 ## Testing
 
-Percussionist uses a four-layer testing model. See [`docs/testing-strategy.md`](docs/testing-strategy.md) for full details including deterministic principles, responsibility boundaries, and the recipe for adding new E2E tests.
+Percussionist uses a five-layer testing model. See [`docs/testing-strategy.md`](docs/testing-strategy.md) for full details including deterministic principles, responsibility boundaries, and the recipe for adding new E2E tests.
 
 | Tier | Command | When to run | Duration target |
 |------|---------|-------------|-----------------|
-| **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 1 min |
+| **Unit + Smoke** | `pnpm test` | Every commit; PR gate required | < 2 min |
+| **Live PostgreSQL** | `PERCUSSIONIST_TEST_PG_URL=… bun test …/postgres-live.test.ts` | After touching the `pg` pool, migrations, the advisory lock, the pgvector schema, or the auth adapter | < 30 s |
 | **Core E2E** | `pnpm e2e:core` | Before merging feature branches; manual trigger in CI (workflow_dispatch) | < 10 min |
 | **Extended E2E** | `pnpm e2e:extended` | Before releases; manual trigger for complex paths | < 20 min |
+
+The live-PostgreSQL tier skips itself when `PERCUSSIONIST_TEST_PG_URL` is unset,
+so `pnpm test` stays database-free. PGlite cannot cover advisory-lock
+contention, the `pg.Pool` path, `CREATE EXTENSION vector`, or driver type
+mapping — changes in those areas need a real server to be considered verified.
 
 ### `bun test --isolate` in `@percussionist/web`
 
@@ -133,6 +139,8 @@ See [`docs/testing-strategy.md`](docs/testing-strategy.md#adding-a-new-determini
   - `/data/workspace/` - persistent local git workspace (`source.local: true`)
 - PVC size: 50Gi (default)
 - PVC lifecycle: Tied to Project (auto-deleted when project is deleted)
+- The memory service does not store vectors on this PVC; it uses the shared
+  PostgreSQL/pgvector database
 - Storage: Uses cluster default storage class with ReadWriteOnce access mode (default)
   - For RWX support on minikube/k3s, requires NFS or similar provisioner
   - Falls back gracefully if PVC creation fails
@@ -195,14 +203,16 @@ The code-server mounts the project's data PVC at `/data`, giving access to:
 Projects can enable a per-project vector memory service for semantic context
 retrieval and session summarization. When `spec.embedding.enabled: true`, the
 operator deploys a `memory-{project}` Deployment + Service running a Bun server
-with bun:sqlite and sqlite-vec for vector storage and search.
+backed by PostgreSQL/pgvector for vector storage and search.
 
 ### How It Works
 
-1. **Memory Service Pod** — A `memory-{project}` Bun container runs alongside
-   the project's data PVC. It exposes REST endpoints on port 4100 for storing
-   memories, semantic search, and context retrieval. It calls Ollama's
-   `/api/embeddings` endpoint to generate vector embeddings.
+1. **Memory Service Pod** — A `memory-{project}` Bun container connects to the
+   shared PostgreSQL/pgvector database and scopes every query to the Project's
+    Kubernetes UID. It exposes REST endpoints on port 4100 for storing
+    memories, semantic search,
+   and context retrieval. It calls Ollama's `/api/embeddings` endpoint to
+   generate vector embeddings.
 
 2. **Context Injection** — When `buildWorkerRun()` constructs the worker prompt
    (see `worker-builder.ts`), if `spec.embedding.enabled: true` it queries the
@@ -258,8 +268,8 @@ spec:
   ```
   Model warmup is handled per-project by the memory service at startup.
   The memory service pulls the model declared in `spec.embedding.model`
-  (default `nomic-embed-text`), so no global preload or manual pull is required.
-- `source.git` or `source.local` must be set (needs a data PVC)
+   (default `nomic-embed-text`), so no global preload or manual pull is required.
+- PostgreSQL with pgvector must be reachable through the `percussionist-db` Secret
 
 ### Available MCP Tools
 
@@ -285,7 +295,10 @@ these tools for agent use:
 ### Lifecycle
 
 - **Created**: Automatically when a Project with `spec.embedding.enabled: true`
-  is created and has `source.git` or `source.local` configured.
+  is created. No source configuration is required — the memory service stores its
+  rows in the shared PostgreSQL database and no longer mounts a project data PVC
+  (`shouldReconcileMemoryService` in `packages/operator/src/memory-service.ts`
+  checks `embedding.enabled` alone).
 - **Deleted**: Automatically when the Project is deleted (via owner references)
   or when `embedding.enabled` is set to `false`.
 
@@ -467,39 +480,79 @@ missing.
 - Findings are stored in `board.status.findings[]` (curated, deduped view) and the raw inbox in a per-project `{project}-findings` ConfigMap
 - `opencode-web` supports MCP servers via the `mcp` config key (not `mcpServers` — that was a legacy format); the manager's agent-config ConfigMap uses `mcp` with `type: "remote"` pointing at the in-process MCP server on :4097.
 
-## Database (SQLite — `@percussionist/web`)
+## Database (PostgreSQL — web + memory)
 
-The web server uses bun:sqlite via Drizzle ORM. Schema and migrations are managed by drizzle-kit.
+The web server uses Drizzle ORM with the `pg` node-postgres driver. Memory
+services use the same Drizzle/pg stack with a pgvector `vector` column. Schema
+and migrations are managed by drizzle-kit; production applies pending migrations
+at startup under separate PostgreSQL advisory locks and migration tables.
+Both journal tables live in drizzle's own `drizzle` schema, so they are addressed
+as `drizzle.drizzle_web_migrations` and `drizzle.drizzle_memory_migrations`.
 
-**Tables:** `runs`, `messages`, `toolCalls`, `fileOps`, `taskEvents` (append-only audit log of `Task` state transitions — live task state is authoritative in the CRD status subresource).
+**Web tables:** `runs`, `messages`, `toolCalls`, `fileOps`, `metricSnapshots`,
+`usageDaily`, `usageDailyProject`, `usageSettings`, `taskEvents`, the better-auth
+tables, and the web-push tables. The memory service owns `memories`, scoped by
+`project` and `id`.
 
-**Tool Metrics:** Tool usage data comes from `toolCalls` (extracted from message parts by the dispatcher's `stats-reporter.ts`), NOT from `toolEvents` (which was based on SSE events and was removed — OpenCode's SSE stream does not emit `tool.started`/`tool.finished`). The `GET /api/stats/tool-metrics?days=30&agent=X` endpoint queries `toolCalls` joined with `runs` and `messages` for agent breakdown and estimated token cost per tool.
+**Memory vectors and the ANN index:** `memories.embedding` is an *unbounded*
+`vector` column so `spec.embedding.dimensions` stays a setting rather than a
+migration, and each row stores its own width in `memories.dims` under a
+`CHECK (dims = vector_dims(embedding))`. pgvector cannot build an HNSW index on
+an unbounded column, so `ensureVectorIndex()` in `packages/memory-service/src/db.ts`
+creates one per width at startup —
+`USING hnsw ((embedding::vector(n)) vector_cosine_ops) WHERE dims = n` — and
+`handleSearch` must repeat that exact cast and filter or the planner falls back
+to a sequential scan. Both the cast width and the `dims` predicate are inlined
+with `sql.raw`, because a type modifier must be a constant and DDL cannot carry
+bind parameters. The index name carries the width, so changing
+`EMBEDDING_DIMENSIONS` adds an index instead of reusing a wrong-width one.
+
+**Connection budget:** the web pod and every `memory-{project}` pod open their
+own pool, both reading the same `DATABASE_POOL_MAX` env var (default 10; the
+operator sets it to 2 for memory pods — `MEMORY_DATABASE_POOL_MAX` does not
+exist). The bundled StatefulSet runs with `max_connections=200`, so budget
+`10 * (1 + projects with embedding enabled)` plus headroom — raise
+`PGMAXCONNECTIONS` in `k8s/deploy/postgres.yaml` for larger fleets.
+
+**Tool Metrics:** Tool usage data comes from `toolCalls` (extracted from message
+parts by the dispatcher's `stats-reporter.ts`), NOT from `toolEvents` (which was
+based on SSE events and was removed — OpenCode's SSE stream does not emit
+`tool.started`/`tool.finished`). The `GET /api/stats/tool-metrics?days=30&agent=X`
+endpoint queries `toolCalls` joined with `runs` and `messages` for agent
+breakdown and estimated token cost per tool.
 
 **Key files:**
-- `packages/web/src/server/schema.ts` — Drizzle table definitions (single source of truth; no driver imports, safe for drizzle-kit)
-- `packages/web/src/server/db.ts` — DB singleton; calls `migrate()` on first open
-- `packages/web/migrations/` — generated SQL migration files (committed to git)
-- `packages/web/drizzle.config.ts` — drizzle-kit config
+- `packages/web/src/server/schema.ts` — Drizzle pg-core table definitions (single source of truth; safe for drizzle-kit)
+- `packages/web/src/server/db.ts` — async PostgreSQL/PGlite database lifecycle and migration lock
+- `packages/web/migrations-pg/` — generated PostgreSQL migration files (committed to git)
+- `packages/web/drizzle.config.ts` — drizzle-kit PostgreSQL config
+- `packages/memory-service/src/schema.ts` and `packages/memory-service/migrations/` — memory schema and pgvector baseline
+- `packages/web/tests/helpers/pglite.ts` and `packages/memory-service/src/__tests__/` — PGlite test harness
 
 **Workflow for schema changes:**
 ```bash
-# 1. Edit packages/web/src/server/schema.ts
+# 1. Edit the relevant schema.ts
 # 2. Generate migration SQL
-cd packages/web && npx drizzle-kit generate
+pnpm --filter @percussionist/web db:generate
+pnpm --filter @percussionist/memory-service db:generate
 # 3. Commit schema.ts + the new migration file together
-git add src/server/schema.ts migrations/
 ```
-The server applies all pending migrations automatically on startup via `migrate()` in `getDb()`. No manual ALTER TABLE blocks.
+The server applies all pending migrations at startup. Never hand-edit a
+migration journal or snapshot; use drizzle-kit for every schema change. The one
+hand-written statement is `CREATE EXTENSION IF NOT EXISTS vector` at the top of
+the memory baseline, prepended after generation — keep it first, and keep it
+idempotent.
 
-**Removing tables — always use drizzle-kit generate, never manual surgery:**
-Never delete a migration file or manually edit `migrations/meta/_journal.json` or `migrations/meta/0000_snapshot.json`. The journal tracks which migrations have been applied to production databases — removing an entry causes migration desync. To remove a table:
-1. Delete the table definition from `schema.ts`
-2. Run `cd packages/web && npx drizzle-kit generate`
-3. Commit `schema.ts` + the new migration file together
-Drizzle-kit will produce a `DROP TABLE` migration and update the journal/snapshot automatically.
+**pgvector privileges:** that statement needs a role allowed to `CREATE
+EXTENSION`. The bundled StatefulSet runs as the `percussionist-db` `POSTGRES_USER`
+(superuser), so it is fine there; against a managed database, have an admin
+install pgvector once and the statement becomes a no-op. `db.ts` rewrites the
+resulting error with that instruction instead of surfacing the raw error.
 
-**Adding columns — what NOT to do:**
-Do not add `ALTER TABLE` try/catch blocks to `db.ts`. Do not duplicate DDL as raw SQL strings in `db.ts`. Always use drizzle-kit generate to produce a migration file.
+**Migrating off SQLite:** the PostgreSQL schema starts empty. There is no
+importer from the old SQLite files, and memories are scoped by Project UID, so
+recreating a project under the same name starts from a fresh, empty scope rather
+than inheriting the deleted project's rows.
 
 ## Conventions
 - Formatting and linting via Biome (see `biome.json`)
@@ -979,6 +1032,6 @@ Setup instructions: `k8s/self-dev/secrets/README.md`
 3. `@percussionist/operator` - Run reconciler; creates Pod/Service/Ingress/ConfigMap
 4. `@percussionist/dispatcher` - Sidecar; session lifecycle, SSE streaming, analytics
 5. `@percussionist/manager-controller` - Project board controller + embedded agent module (decision engine, MCP tools on :4097, chat handler on :4098, opencode-web sidecar on :4096)
-6. `@percussionist/memory-service` - Per-project vector embedding server; REST API for storing, searching, and retrieving memories (Bun + sqlite-vec)
-7. `@percussionist/web` - Hono + React dashboard; REST APIs, stats DB (SQLite via Drizzle)
+6. `@percussionist/memory-service` - Per-project vector embedding server; REST API for storing, searching, and retrieving memories (Bun + PostgreSQL/pgvector)
+7. `@percussionist/web` - Hono + React dashboard; REST APIs, stats/auth DB (PostgreSQL via Drizzle)
 8. `@percussionist/cli` - beatctl CLI; talks to K8s API directly (includes `chat` command)

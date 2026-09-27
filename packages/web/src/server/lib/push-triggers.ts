@@ -114,17 +114,16 @@ export function runPush(run: Run, to: string): PushPayload | null {
 let _prevTaskPhases: Map<string, string> | null = null;
 let _prevRunPhases: Map<string, string> | null = null;
 
-function hasSubscribers(): boolean {
-  return (
-    getDb().select({ id: pushSubscription.id }).from(pushSubscription).limit(1).all().length > 0
-  );
+async function hasSubscribers(): Promise<boolean> {
+  const rows = await getDb().select({ id: pushSubscription.id }).from(pushSubscription).limit(1);
+  return rows.length > 0;
 }
 
 async function poll(): Promise<void> {
   // No devices → skip the K8s round-trips. Also drop the carried phase maps:
   // whatever happens while nobody listens should not fire retroactively when
   // the first device subscribes.
-  if (!hasSubscribers()) {
+  if (!(await hasSubscribers())) {
     _prevTaskPhases = null;
     _prevRunPhases = null;
     return;

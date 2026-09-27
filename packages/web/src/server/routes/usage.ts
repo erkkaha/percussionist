@@ -92,7 +92,8 @@ router.post('/heartbeat', auth(), async (c) => {
   const db = getDb();
   const date = today();
 
-  db.insert(usageDaily)
+  await db
+    .insert(usageDaily)
     .values({
       date,
       reviewing: body.reviewing ?? 0,
@@ -102,12 +103,11 @@ router.post('/heartbeat', auth(), async (c) => {
     .onConflictDoUpdate({
       target: usageDaily.date,
       set: {
-        reviewing: sql`max(${usageDaily.reviewing}, ${body.reviewing ?? 0})`,
-        planning: sql`max(${usageDaily.planning}, ${body.planning ?? 0})`,
-        other: sql`max(${usageDaily.other}, ${body.other ?? 0})`,
+        reviewing: sql`greatest(${usageDaily.reviewing}, ${body.reviewing ?? 0})`,
+        planning: sql`greatest(${usageDaily.planning}, ${body.planning ?? 0})`,
+        other: sql`greatest(${usageDaily.other}, ${body.other ?? 0})`,
       },
-    })
-    .run();
+    });
 
   for (const [project, usage] of Object.entries(body.projectUsage ?? {})) {
     const name = project.trim();
@@ -116,7 +116,8 @@ router.post('/heartbeat', auth(), async (c) => {
     const reviewing = usage.reviewing ?? 0;
     const planning = usage.planning ?? 0;
 
-    db.insert(usageDailyProject)
+    await db
+      .insert(usageDailyProject)
       .values({
         date,
         project: name,
@@ -126,20 +127,18 @@ router.post('/heartbeat', auth(), async (c) => {
       .onConflictDoUpdate({
         target: [usageDailyProject.date, usageDailyProject.project],
         set: {
-          reviewing: sql`max(${usageDailyProject.reviewing}, ${reviewing})`,
-          planning: sql`max(${usageDailyProject.planning}, ${planning})`,
+          reviewing: sql`greatest(${usageDailyProject.reviewing}, ${reviewing})`,
+          planning: sql`greatest(${usageDailyProject.planning}, ${planning})`,
         },
-      })
-      .run();
+      });
   }
 
-  const row = db.select().from(usageDaily).where(eq(usageDaily.date, date)).get();
-  const projectRows = db
+  const row = (await db.select().from(usageDaily).where(eq(usageDaily.date, date)))[0];
+  const projectRows = await db
     .select()
     .from(usageDailyProject)
-    .where(eq(usageDailyProject.date, date))
-    .all();
-  const settings = db.select().from(usageSettings).where(eq(usageSettings.id, 1)).get();
+    .where(eq(usageDailyProject.date, date));
+  const settings = (await db.select().from(usageSettings).where(eq(usageSettings.id, 1)))[0];
 
   return c.json(buildResponse(row, projectRows, settings));
 });
@@ -147,19 +146,18 @@ router.post('/heartbeat', auth(), async (c) => {
 router.get('/today', auth(), async (c) => {
   const db = getDb();
   const date = today();
-  const row = db.select().from(usageDaily).where(eq(usageDaily.date, date)).get();
-  const projectRows = db
+  const row = (await db.select().from(usageDaily).where(eq(usageDaily.date, date)))[0];
+  const projectRows = await db
     .select()
     .from(usageDailyProject)
-    .where(eq(usageDailyProject.date, date))
-    .all();
-  const settings = db.select().from(usageSettings).where(eq(usageSettings.id, 1)).get();
+    .where(eq(usageDailyProject.date, date));
+  const settings = (await db.select().from(usageSettings).where(eq(usageSettings.id, 1)))[0];
   return c.json(buildResponse(row, projectRows, settings));
 });
 
 router.get('/settings', auth(), async (c) => {
   const db = getDb();
-  const settings = db.select().from(usageSettings).where(eq(usageSettings.id, 1)).get();
+  const settings = (await db.select().from(usageSettings).where(eq(usageSettings.id, 1)))[0];
   return c.json(settings ?? { maxTimeHours: 0, showPercent: false, lockOnMax: false });
 });
 
@@ -171,37 +169,34 @@ router.put('/settings', auth(), async (c) => {
   }>();
   const db = getDb();
 
-  const existing = db.select().from(usageSettings).where(eq(usageSettings.id, 1)).get();
+  const existing = (await db.select().from(usageSettings).where(eq(usageSettings.id, 1)))[0];
 
   if (existing) {
-    db.update(usageSettings)
+    await db
+      .update(usageSettings)
       .set({
         ...(body.maxTimeHours !== undefined ? { maxTimeHours: body.maxTimeHours } : {}),
         ...(body.showPercent !== undefined ? { showPercent: body.showPercent } : {}),
         ...(body.lockOnMax !== undefined ? { lockOnMax: body.lockOnMax } : {}),
       })
-      .where(eq(usageSettings.id, 1))
-      .run();
+      .where(eq(usageSettings.id, 1));
   } else {
-    db.insert(usageSettings)
-      .values({
-        id: 1,
-        maxTimeHours: body.maxTimeHours ?? 0,
-        showPercent: body.showPercent ?? false,
-        lockOnMax: body.lockOnMax ?? false,
-      })
-      .run();
+    await db.insert(usageSettings).values({
+      id: 1,
+      maxTimeHours: body.maxTimeHours ?? 0,
+      showPercent: body.showPercent ?? false,
+      lockOnMax: body.lockOnMax ?? false,
+    });
   }
 
   // Recalculate lock after settings change.
   const date = today();
-  const row = db.select().from(usageDaily).where(eq(usageDaily.date, date)).get();
-  const projectRows = db
+  const row = (await db.select().from(usageDaily).where(eq(usageDaily.date, date)))[0];
+  const projectRows = await db
     .select()
     .from(usageDailyProject)
-    .where(eq(usageDailyProject.date, date))
-    .all();
-  const newSettings = db.select().from(usageSettings).where(eq(usageSettings.id, 1)).get();
+    .where(eq(usageDailyProject.date, date));
+  const newSettings = (await db.select().from(usageSettings).where(eq(usageSettings.id, 1)))[0];
   buildResponse(row, projectRows, newSettings);
 
   return c.json(newSettings ?? { maxTimeHours: 0, showPercent: false, lockOnMax: false });

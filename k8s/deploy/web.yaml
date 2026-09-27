@@ -1,28 +1,7 @@
-# RBAC, Service, Deployment, and PVC for the percussionist web dashboard.
+# RBAC, Service, and Deployment for the percussionist web dashboard.
 #
-# The web server reads Run resources and pod logs, and also hosts
-# the stats SQLite database (bun:sqlite) on a PersistentVolumeClaim.
-# Dispatcher sidecars POST session data to /api/stats/session after each run.
-#
-# Stats configuration (env vars on the Deployment):
-#   DATA_DIR        — path where percussionist.db is stored (default: /app/data)
-#   RETENTION_DAYS  — delete sessions older than N days (default: 30; 0=forever)
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: percussionist-web-db-v3
-  namespace: percussionist
-  labels:
-    app.kubernetes.io/name: percussionist
-    app.kubernetes.io/component: web
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: standard
-  resources:
-    requests:
-      storage: 1Gi
+# The web server reads Run resources and pod logs and stores session, auth, and
+# push state in PostgreSQL.
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -176,6 +155,8 @@ metadata:
     app.kubernetes.io/component: web
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: percussionist
@@ -200,8 +181,14 @@ spec:
               value: percussionist
             - name: PORT
               value: "8080"
-            - name: DATA_DIR
-              value: /app/data
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: percussionist-db
+                  key: url
+                  optional: false
+            - name: DATABASE_POOL_MAX
+              value: "10"
             # Number of days to retain session stats (0 = keep forever).
             - name: RETENTION_DAYS
               value: "30"
@@ -282,12 +269,9 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { cpu: 500m, memory: 1Gi }
-          volumeMounts:
-            - name: percussionist-db
-              mountPath: /app/data
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/ready
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
@@ -297,10 +281,6 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 15
-      volumes:
-        - name: percussionist-db
-          persistentVolumeClaim:
-            claimName: percussionist-web-db-v3
 ---
 # Dashboard Ingress — exposes the Percussionist web UI at a stable URL without
 # kubectl port-forward. Relies on a Traefik ingress controller (the default on

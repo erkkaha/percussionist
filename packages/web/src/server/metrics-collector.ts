@@ -1,9 +1,9 @@
 // Metrics snapshot collector.
 //
-// Polls the metrics-server API every 30s and persists snapshots to SQLite
-// for time-series queries. Uses host-level memory from kubelet /stats/summary
-// and total VM capacity from the core API. Automatically disables itself if
-// the metrics-server is not installed.
+// Polls the metrics-server API every 30s and persists snapshots to the stats
+// database for time-series queries. Uses host-level memory from kubelet
+// /stats/summary and total VM capacity from the core API. Automatically
+// disables itself if the metrics-server is not installed.
 
 import { lt } from 'drizzle-orm';
 import { getDb, metricSnapshots } from './db.js';
@@ -24,7 +24,7 @@ export async function startMetricsCollector(): Promise<void> {
 
   console.log('[metrics-collector] starting (poll every 30s)');
   void poll();
-  _interval = setInterval(poll, POLL_INTERVAL_MS);
+  _interval = setInterval(() => void poll(), POLL_INTERVAL_MS);
 }
 
 export function stopMetricsCollector(): void {
@@ -66,11 +66,11 @@ async function poll(): Promise<void> {
     });
 
     if (rows.length) {
-      db.insert(metricSnapshots).values(rows).run();
+      await db.insert(metricSnapshots).values(rows);
     }
 
     const cutoff = new Date(Date.now() - TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    db.delete(metricSnapshots).where(lt(metricSnapshots.recordedAt, cutoff)).run();
+    await db.delete(metricSnapshots).where(lt(metricSnapshots.recordedAt, cutoff));
   } catch (e) {
     console.error('[metrics-collector] poll error:', e);
   }

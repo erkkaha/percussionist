@@ -41,6 +41,7 @@ try {
 // Memory / embedding service defaults.
 const MEMORY_SERVICE_IMAGE =
   process.env.MEMORY_SERVICE_IMAGE ?? 'ghcr.io/erkkaha/percussionist/memory:latest';
+const MEMORY_DATABASE_SECRET = process.env.MEMORY_DATABASE_SECRET ?? 'percussionist-db';
 const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL ?? `http://ollama.${NAMESPACE}.svc.cluster.local:11434`;
 const OLLAMA_ALLOWED_ORIGINS =
@@ -108,6 +109,7 @@ export {
   INGRESS_BASE_URL,
   INGRESS_CLASS,
   INGRESS_TLS_SECRET,
+  MEMORY_DATABASE_SECRET,
   MEMORY_SERVICE_IMAGE,
   NAMESPACE,
   OLLAMA_ALLOWED_ORIGINS,

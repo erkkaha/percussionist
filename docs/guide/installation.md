@@ -8,9 +8,10 @@ upgrades behave later:
 | Direct | `beatctl deploy`, or the manual steps below | Container images only — CRDs need a manual re-apply |
 | GitOps | `beatctl deploy --gitops` | CRDs and manifests together, applied in order |
 
-Direct is the smaller footprint and needs nothing besides `kubectl`. GitOps
-runs two extra controllers and makes the dashboard's Upgrade button complete —
-see [GitOps upgrades](/guide/gitops) for what that fixes and why it matters.
+Direct is the smaller footprint and needs only `kubectl` plus a PostgreSQL
+connection. GitOps runs two extra controllers and makes the dashboard's Upgrade
+button complete — see [GitOps upgrades](/guide/gitops) for what that fixes and why
+it matters.
 
 ## CRDs
 
@@ -22,9 +23,45 @@ kubectl apply -f k8s/crds/
 
 CRDs must be applied before any Percussionist resources can be created.
 
+## Database
+
+`beatctl deploy` creates a random `percussionist-db` Secret when it is missing.
+Pass `--database-url <url>` to use an external PostgreSQL instance. For a
+manual install, create it before applying the manifests (or provide an external
+PostgreSQL URL under the `url` key):
+
+```bash
+DB_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
+kubectl -n percussionist create secret generic percussionist-db \
+  --from-literal=username=percussionist \
+  --from-literal=database=percussionist \
+  --from-literal=password="$DB_PASSWORD" \
+  --from-literal=url="postgresql://percussionist:${DB_PASSWORD}@percussionist-postgres:5432/percussionist"
+```
+
+The bundled `k8s/deploy/postgres.yaml` uses a single-replica `pgvector` StatefulSet
+running **PostgreSQL 18 with pgvector 0.8.6** — the extension version is pinned
+alongside the PostgreSQL major because extension builds are per-major. The
+manifest sets no `storageClassName`, so the PVC is provisioned with the cluster
+default class (override with `beatctl deploy --database-storage-class <name>`).
+To use a managed PostgreSQL, create the `percussionist-db` Secret with that
+server's `url` before applying, and `beatctl deploy` then skips the bundled
+StatefulSet entirely. Nothing in the emitted SQL requires PG 18 specifically, so
+an older external server (down to whatever your pgvector build supports) also
+works.
+
+A new PostgreSQL installation starts with an empty schema. Data in the old
+SQLite files is **not** copied automatically — there is no importer — so
+`stats`, `usageDaily` and per-project `memories` start empty. The old PVC is
+still mounted by nothing: nothing reads it, and `beatctl deploy --down` does not
+delete it, so it can be copied from before you reclaim the storage. Note that a
+Flux-managed install prunes resources it no longer tracks, which does not apply
+here (the PVC was never part of a Flux release), but do not run `kubectl delete
+pvc` until you have copied what you need.
+
 ## Manifests
 
-Deploy the operator, manager, web dashboard, and RBAC:
+Deploy PostgreSQL, the operator, manager, web dashboard, and RBAC:
 
 ```bash
 kubectl apply -k k8s/deploy/
@@ -39,9 +76,10 @@ Note `-k`, not `-f`: the directory carries a `kustomization.yaml`, which
 |-----------|---------|----------|
 | `percussionist-operator` | Run reconciler — creates Pods, Services, ConfigMaps | 1 |
 | `percussionist-manager` | Project board controller, decision engine, MCP server | 1 |
-| `percussionist-web` | Hono + React dashboard, stats database | 1 |
+| `percussionist-postgres` | PostgreSQL + pgvector | 1 |
+| `percussionist-web` | Hono + React dashboard, stats/auth database | 1 |
 
-All deployments use `Recreate` strategy. No leader election required.
+Control-plane deployments use `Recreate`; no leader election is required.
 
 ## Namespace
 

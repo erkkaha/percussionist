@@ -1,9 +1,7 @@
 # Dockerfile for the percussionist web dashboard.
 #
-# Build stage uses Node + pnpm (same toolchain as the rest of the monorepo) to
-# compile the TypeScript server and the Vite client bundle. The runtime stage
-# switches to the official Bun image so the server runs under Bun and has
-# access to bun:sqlite for the stats database.
+# Build stage uses Node + pnpm to compile the TypeScript server and Vite client
+# bundle. The runtime stage uses Bun with the PostgreSQL Drizzle driver.
 #
 #   docker build -t percussionist/web:dev -f images/web/Dockerfile .
 
@@ -31,12 +29,12 @@ COPY packages/api/tsconfig.json packages/api/tsconfig.json
 COPY packages/kube/src           packages/kube/src
 COPY packages/kube/tsconfig.json packages/kube/tsconfig.json
 COPY packages/web/src              packages/web/src
+COPY packages/web/migrations-pg    packages/web/migrations-pg
 COPY packages/web/src/client/index.html packages/web/src/client/index.html
 COPY packages/web/tsconfig.json    packages/web/tsconfig.json
 COPY packages/web/tsconfig.server.json packages/web/tsconfig.server.json
 COPY packages/web/tsconfig.client.json packages/web/tsconfig.client.json
 COPY packages/web/vite.config.ts   packages/web/vite.config.ts
-COPY packages/web/migrations       packages/web/migrations
 RUN ./node_modules/.bin/tsc -p packages/api/tsconfig.json \
  && ./node_modules/.bin/tsc -p packages/kube/tsconfig.json \
  && cd packages/web && ./node_modules/.bin/vite build --config vite.config.ts && cd /repo \
@@ -56,13 +54,9 @@ COPY --from=build /repo/packages/kube/dist              /app/packages/kube/dist
 COPY --from=build /repo/packages/kube/package.json      /app/packages/kube/package.json
 COPY --from=build /repo/packages/kube/node_modules      /app/packages/kube/node_modules
 COPY --from=build /repo/packages/web/dist               /app/packages/web/dist
-COPY --from=build /repo/packages/web/migrations         /app/packages/web/migrations
+COPY --from=build /repo/packages/web/migrations-pg     /app/packages/web/migrations-pg
 COPY --from=build /repo/packages/web/package.json       /app/packages/web/package.json
 COPY --from=build /repo/packages/web/node_modules       /app/packages/web/node_modules
-
-# Data directory for percussionist.db (override DATA_DIR to mount a PVC here).
-ENV DATA_DIR=/app/data
-RUN mkdir -p /app/data
 
 EXPOSE 8080
 ENV PORT=8080

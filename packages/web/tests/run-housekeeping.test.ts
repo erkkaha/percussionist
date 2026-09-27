@@ -6,37 +6,31 @@
 // Two layers, per the plan:
 //   1. runHousekeeping (lib/run-housekeeping.ts) — unit-tested directly with
 //      throwing / rejecting / slow fns.
-//   2. pruneExpiredRunKeys (lib/agent-keys.ts) — exercised against a real temp
-//      DB to prove it resolves (does not reject) on its happy path. The wrapper
-//      is what guarantees a forced busy/error cannot propagate.
+//   2. pruneExpiredRunKeys (lib/agent-keys.ts) — exercised against a real
+//      in-memory PGlite to prove it resolves (does not reject) on its happy
+//      path. The wrapper is what guarantees a forced busy/error cannot
+//      propagate.
 
-import { afterAll, describe, expect, it, mock } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 // ---------------------------------------------------------------------------
-// Test DB isolation — set before importing modules that read DATA_DIR lazily.
+// Auth must be enforced so agent-keys takes its real path (same as
+// agent-keys.test.ts). A PGlite database is created per test in the
+// pruneExpiredRunKeys block below, before that block's first query.
 
-const TEST_DATA_DIR = join('/tmp', `percussionist-housekeeping-${Date.now()}`);
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.SESSION_SECRET = 'test-session-secret-for-housekeeping';
 process.env.WEB_BASE_URL = 'http://localhost:8080';
-// Auth must be enforced so agent-keys takes its real path (same as
-// agent-keys.test.ts).
 delete process.env.AUTH_DISABLED;
-
-mkdirSync(TEST_DATA_DIR, { recursive: true });
 
 const { runHousekeeping } = await import('../src/server/lib/run-housekeeping.js');
 const { pruneExpiredRunKeys, SERVICE_USER_ID } = await import('../src/server/lib/agent-keys.js');
-const { closeDb, getDb, apikey } = await import('../src/server/db.js');
+const { getDb, apikey } = await import('../src/server/db.js');
 const { resetAuth } = await import('../src/server/lib/better-auth.js');
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeTestDb();
   resetAuth();
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
 });
 
 // ===========================================================================
@@ -110,10 +104,22 @@ describe('runHousekeeping', () => {
 });
 
 // ===========================================================================
-// pruneExpiredRunKeys — real temp DB
+// pruneExpiredRunKeys — real in-memory PGlite
 // ===========================================================================
 
-describe('pruneExpiredRunKeys against a live temp DB', () => {
+describe('pruneExpiredRunKeys against a live PGlite database', () => {
+  // A fresh database per test: the second test asserts that pruning finds
+  // nothing, which only holds if the first test's inserts did not survive.
+  beforeEach(async () => {
+    await createTestDb();
+    resetAuth();
+  });
+
+  afterEach(async () => {
+    await closeTestDb();
+    resetAuth();
+  });
+
   it('resolves (does not reject) and deletes only expired run keys', async () => {
     const db = getDb();
 
@@ -121,43 +127,41 @@ describe('pruneExpiredRunKeys against a live temp DB', () => {
     const keptId = `run-key-kept-${Date.now()}`;
     const nonRunId = `component-kept-${Date.now()}`;
 
-    db.insert(apikey)
-      .values([
-        {
-          id: expiredId,
-          name: 'run:expired',
-          referenceId: SERVICE_USER_ID,
-          key: 'hash-expired',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          expiresAt: new Date(Date.now() - 60_000), // already past
-        },
-        {
-          id: keptId,
-          name: 'run:still-valid',
-          referenceId: SERVICE_USER_ID,
-          key: 'hash-valid',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          expiresAt: new Date(Date.now() + 60_000), // still in the future
-        },
-        {
-          id: nonRunId,
-          name: 'component:operator',
-          referenceId: SERVICE_USER_ID,
-          key: 'hash-component',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          expiresAt: new Date(Date.now() - 60_000), // expired but not a run key
-        },
-      ])
-      .run();
+    await db.insert(apikey).values([
+      {
+        id: expiredId,
+        name: 'run:expired',
+        referenceId: SERVICE_USER_ID,
+        key: 'hash-expired',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        expiresAt: new Date(Date.now() - 60_000), // already past
+      },
+      {
+        id: keptId,
+        name: 'run:still-valid',
+        referenceId: SERVICE_USER_ID,
+        key: 'hash-valid',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        expiresAt: new Date(Date.now() + 60_000), // still in the future
+      },
+      {
+        id: nonRunId,
+        name: 'component:operator',
+        referenceId: SERVICE_USER_ID,
+        key: 'hash-component',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        expiresAt: new Date(Date.now() - 60_000), // expired but not a run key
+      },
+    ]);
 
     // Must resolve — a rejection here would previously have hit the
     // unhandledRejection handler and called process.exit(1).
     await expect(pruneExpiredRunKeys()).resolves.toBe(1);
 
-    const remaining = db.select({ id: apikey.id }).from(apikey).all();
+    const remaining = await db.select({ id: apikey.id }).from(apikey);
     const ids = remaining.map((r) => r.id);
     expect(ids).not.toContain(expiredId);
     expect(ids).toContain(keptId);

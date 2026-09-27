@@ -213,6 +213,8 @@ spec:
               value: "ReadWriteOnce"
             - name: DEFAULT_STORAGE_SIZE
               value: "50Gi"
+            - name: MEMORY_DATABASE_SECRET
+              value: percussionist-db
             # How often the operator re-renders agent-config / opencode-config
             # from ClusterSettings even when no informer event arrives, in
             # milliseconds. Reclaims field ownership from foreign writers

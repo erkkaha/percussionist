@@ -1279,9 +1279,8 @@ export const ProjectSpecSchema = z.object({
   codeServer: CodeServerSpecSchema.optional(),
 
   // Per-project memory service with vector embeddings for agent context/memory.
-  // Requires source.git or source.local (needs a data PVC to mount).
-  // When enabled, the operator deploys a memory-{project} Deployment + Service
-  // that stores and searches semantic vectors via bun:sqlite + sqlite-vec.
+  // The operator deploys a memory-{project} Deployment + Service backed by
+  // PostgreSQL/pgvector; the database URL comes from the percussionist-db Secret.
   embedding: EmbeddingSpecSchema.optional(),
 
   // System packages (apk) installed into every run pod for this project.

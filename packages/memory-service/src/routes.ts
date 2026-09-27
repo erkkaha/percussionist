@@ -1,37 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { getRawDb } from './db.js';
+import { and, count, desc, eq, type SQL, sql } from 'drizzle-orm';
+import {
+  getDb,
+  getEmbeddingDimensions,
+  getProject,
+  inTransaction,
+  pingDatabase,
+  toEmbeddingVector,
+} from './db.js';
 import { getEmbedding } from './embed.js';
 import { normalizeModelName } from './model-warmup.js';
 import { ollamaFetch } from './ollama.js';
-
-/**
- * Run `fn` inside a SQLite transaction, rolling back if it throws.
- *
- * Every write path used to BEGIN and COMMIT with no ROLLBACK, so any failure
- * in between left the connection inside an open transaction. The next BEGIN
- * then failed with "cannot start a transaction within a transaction" and every
- * subsequent write was wedged until the pod restarted.
- *
- * `fn` must be synchronous: SQLite holds the write lock for the life of the
- * transaction, so awaiting anything here (an embedding call, say) blocks all
- * other writers for the duration of that round-trip.
- */
-export function inTransaction<T>(raw: ReturnType<typeof getRawDb>, fn: () => T): T {
-  raw.run('BEGIN TRANSACTION');
-  try {
-    const result = fn();
-    raw.run('COMMIT');
-    return result;
-  } catch (e) {
-    try {
-      raw.run('ROLLBACK');
-    } catch {
-      // Rolling back a transaction that already aborted is not itself fatal;
-      // surface the original error instead.
-    }
-    throw e;
-  }
-}
+import { memories } from './schema.js';
 
 // ---------------------------------------------------------------------------
 // Request / Response types
@@ -69,30 +49,6 @@ interface ContextResponse {
   context: string;
 }
 
-// ---------------------------------------------------------------------------
-// Initialise vector tables
-
-export function initDb(): void {
-  const dims = parseInt(process.env.EMBEDDING_DIMENSIONS ?? '768', 10);
-  const raw = getRawDb();
-  raw.run(`
-    CREATE TABLE IF NOT EXISTS memories (
-      id TEXT PRIMARY KEY,
-      agent_run TEXT,
-      content TEXT NOT NULL,
-      metadata TEXT DEFAULT '{}',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-  raw.run(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-      embedding float[${dims}]
-    )
-  `);
-  raw.run('CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)');
-  raw.run('CREATE INDEX IF NOT EXISTS idx_memories_run ON memories(agent_run)');
-}
-
 interface UpdateMemoryRequest {
   content?: string;
   metadata?: Record<string, unknown>;
@@ -116,12 +72,18 @@ interface ListMemoriesRequest {
   offset?: unknown;
 }
 
+interface ListMemoriesResponse {
+  memories: SearchResult[];
+  total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+
 /**
  * Client input error — surfaced as a 400 by the HTTP entry points instead of a
- * 500. The limit/offset parsers below throw it so neither a direct caller nor
- * the entry points can ever hand SQLite a negative or non-numeric value: in
- * SQLite a negative LIMIT means *no limit* (a client could pull the whole
- * table) and NaN makes the bun:sqlite bind throw.
+ * 500. The limit/offset parsers throw it so a JSON `"abc"` or `?limit=abc` is
+ * rejected here rather than reaching the database as NaN.
  */
 export class ValidationError extends Error {}
 
@@ -129,8 +91,7 @@ export class ValidationError extends Error {}
  * Coerce and validate a `limit` value: undefined/null/empty falls back to
  * `fallback`, anything that is not an integer >= 1 is rejected, and values
  * above `max` are capped. The entry points pass raw (string or number) values
- * through, so a JSON `"abc"` or `?limit=abc` is rejected here rather than
- * reaching the SQLite bind as NaN.
+ * through, so a JSON `"abc"` or `?limit=abc` is rejected here.
  */
 export function parseLimit(value: unknown, fallback: number, max: number): number {
   if (value === undefined || value === null || value === '') return fallback;
@@ -154,85 +115,76 @@ export function parseOffset(value: unknown): number {
   return n;
 }
 
-interface ListMemoriesResponse {
-  memories: SearchResult[];
-  total: number;
-}
-
 // ---------------------------------------------------------------------------
 // Memory operations
 
 export async function handleStoreMemory(body: StoreMemoryRequest): Promise<StoreMemoryResponse> {
   const id = randomUUID();
-  const embedding = await getEmbedding(body.content);
-  const raw = getRawDb();
+  const embedding = toEmbeddingVector(await getEmbedding(body.content));
+  const project = getProject();
 
-  // Use a transaction with last_insert_rowid() so the vec_memories rowid
-  // stays aligned with the memories rowid.  Without this, a DELETE (which
-  // resets the memories rowid counter but not the vec_memories counter)
-  // causes the two sequences to desync and search to silently return wrong
-  // content.
-  inTransaction(raw, () => {
-    raw
-      .prepare('INSERT INTO memories (id, content, metadata, agent_run) VALUES (?, ?, ?, ?)')
-      .run(id, body.content, JSON.stringify(body.metadata ?? {}), body.agentRun ?? null);
-    const rid = (raw.prepare('SELECT last_insert_rowid() AS rid').get() as { rid: number }).rid;
-    raw
-      .prepare('INSERT INTO vec_memories (rowid, embedding) VALUES (?, ?)')
-      .run(rid, new Uint8Array(embedding.buffer));
+  await inTransaction(async (tx) => {
+    await tx.insert(memories).values({
+      project,
+      id,
+      content: body.content,
+      metadata: body.metadata ?? {},
+      agentRun: body.agentRun ?? null,
+      embedding,
+      dims: getEmbeddingDimensions(),
+    });
   });
 
   return { id };
+}
+
+function toVectorLiteral(embedding: number[]): SQL {
+  return sql`${`[${embedding.join(',')}]`}::vector`;
 }
 
 export async function handleSearch(body: SearchRequest): Promise<SearchResult[]> {
   // Validate limit before the embedding round-trip: a client sending garbage
   // gets a 400 without us hitting Ollama first.
   const limit = parseLimit(body.limit, 10, 100);
-  const queryEmbedding = await getEmbedding(body.query);
-  const buf = new Uint8Array(queryEmbedding.buffer);
+  const dims = getEmbeddingDimensions();
+  const queryEmbedding = toEmbeddingVector(await getEmbedding(body.query));
+  const project = getProject();
+  const vector = toVectorLiteral(queryEmbedding);
+  // Written exactly as the ANN index in db.ts#ensureVectorIndex is defined: the
+  // same `embedding::vector(n)` cast and the same `dims = n` filter in WHERE.
+  // Dropping either still returns correct rows, but the planner falls back to
+  // a sequential scan. The width is inlined rather than bound because a
+  // PostgreSQL type modifier must be a constant, and getEmbeddingDimensions()
+  // has already rejected anything that is not a positive integer.
+  const width = sql.raw(String(dims));
+  const distance = sql<number>`(${memories.embedding}::vector(${width})) <=> ${vector}`;
 
-  const raw = getRawDb();
-  const rows = raw
-    .prepare(
-      `SELECT rowid, distance FROM vec_memories WHERE embedding MATCH ?1 ORDER BY distance LIMIT ?2`,
-    )
-    .all(buf, limit) as { rowid: number; distance: number }[];
-
-  if (rows.length === 0) return [];
-
-  const ids = rows.map((r) => r.rowid);
-  const placeholders = ids.map(() => '?').join(',');
-  const params: (string | number)[] = [...ids];
-  let memSql = `SELECT rowid, id, content, metadata, created_at FROM memories WHERE rowid IN (${placeholders})`;
-  if (body.task) {
-    memSql += ` AND json_extract(metadata, '$.task') = ?`;
-    params.push(body.task);
-  }
-  const memRows = raw.prepare(memSql).all(...params) as {
-    rowid: number;
-    id: string;
-    content: string;
-    metadata: string | null;
-    created_at: string | null;
-  }[];
-
-  const memMap = new Map(memRows.map((m) => [m.rowid, m]));
-
-  return rows
-    .filter((r) => memMap.has(r.rowid))
-    .map((r) => {
-      const mem = memMap.get(r.rowid);
-      if (!mem) return null;
-      return {
-        id: mem.id,
-        content: mem.content,
-        metadata: mem.metadata ? safeParseJson(mem.metadata) : null,
-        distance: r.distance,
-        createdAt: mem.created_at,
-      };
+  const rows = await getDb()
+    .select({
+      id: memories.id,
+      content: memories.content,
+      metadata: memories.metadata,
+      createdAt: memories.createdAt,
+      distance,
     })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+    .from(memories)
+    .where(
+      and(
+        eq(memories.project, project),
+        eq(memories.dims, dims),
+        body.task ? sql`${memories.metadata}->>'task' = ${body.task}` : sql`true`,
+      ),
+    )
+    .orderBy(distance)
+    .limit(limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    content: row.content,
+    metadata: row.metadata,
+    distance: Number(row.distance),
+    createdAt: row.createdAt.toISOString(),
+  }));
 }
 
 export async function handleContext(body: ContextRequest): Promise<ContextResponse> {
@@ -254,72 +206,65 @@ export async function handleContext(body: ContextRequest): Promise<ContextRespon
 export async function handleListMemories(body: ListMemoriesRequest): Promise<ListMemoriesResponse> {
   const limit = parseLimit(body.limit, 50, 200);
   const offset = parseOffset(body.offset);
-  const raw = getRawDb();
+  const project = getProject();
+  const scope = body.task
+    ? and(eq(memories.project, project), sql`${memories.metadata}->>'task' = ${body.task}`)
+    : eq(memories.project, project);
 
-  // Count total matching rows (without limit/offset)
-  let countSql = 'SELECT COUNT(*) AS cnt FROM memories';
-  const countParams: (string | number)[] = [];
-  if (body.task) {
-    countSql += ` WHERE json_extract(metadata, '$.task') = ?`;
-    countParams.push(body.task);
-  }
-  const total = (raw.prepare(countSql).get(...countParams) as { cnt: number }).cnt;
+  const [rows, totals] = await Promise.all([
+    getDb()
+      .select({
+        id: memories.id,
+        content: memories.content,
+        metadata: memories.metadata,
+        createdAt: memories.createdAt,
+      })
+      .from(memories)
+      .where(scope)
+      .orderBy(desc(memories.createdAt))
+      .limit(limit)
+      .offset(offset),
+    getDb().select({ value: count() }).from(memories).where(scope),
+  ]);
 
-  // Fetch page of rows ordered by created_at DESC
-  let memSql = `SELECT rowid, id, content, metadata, agent_run, created_at FROM memories`;
-  const params: (string | number)[] = [];
-  if (body.task) {
-    memSql += ` WHERE json_extract(metadata, '$.task') = ?`;
-    params.push(body.task);
-  }
-  memSql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-  params.push(limit, offset);
-
-  const rows = raw.prepare(memSql).all(...params) as {
-    rowid: number;
-    id: string;
-    content: string;
-    metadata: string | null;
-    agent_run: string | null;
-    created_at: string | null;
-  }[];
-
-  const memories = rows.map((m) => ({
-    id: m.id,
-    content: m.content,
-    metadata: m.metadata ? safeParseJson(m.metadata) : null,
-    distance: 0, // list does not return distances
-    createdAt: m.created_at,
-  }));
-
-  return { memories, total };
+  return {
+    memories: rows.map((row) => ({
+      id: row.id,
+      content: row.content,
+      metadata: row.metadata,
+      distance: 0, // list does not return distances
+      createdAt: row.createdAt.toISOString(),
+    })),
+    total: Number(totals[0]?.value ?? 0),
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Get memory by ID
 
 export async function handleGetMemory(id: string): Promise<SearchResult> {
-  const raw = getRawDb();
-  const row = raw
-    .prepare('SELECT rowid, id, content, metadata, created_at FROM memories WHERE id = ?')
-    .get(id) as {
-    rowid: number;
-    id: string;
-    content: string;
-    metadata: string | null;
-    created_at: string | null;
-  } | null;
+  const row = await getDb()
+    .select({
+      id: memories.id,
+      content: memories.content,
+      metadata: memories.metadata,
+      createdAt: memories.createdAt,
+    })
+    .from(memories)
+    .where(and(eq(memories.project, getProject()), eq(memories.id, id)))
+    .limit(1);
 
-  if (!row) {
+  const found = row[0];
+  if (!found) {
     throw new Error(`Memory not found: ${id}`);
   }
 
   return {
-    id: row.id,
-    content: row.content,
-    metadata: row.metadata ? safeParseJson(row.metadata) : null,
+    id: found.id,
+    content: found.content,
+    metadata: found.metadata,
     distance: 0,
-    createdAt: row.created_at,
+    createdAt: found.createdAt.toISOString(),
   };
 }
 
@@ -330,109 +275,98 @@ export async function handleUpdateMemory(
   id: string,
   body: UpdateMemoryRequest,
 ): Promise<UpdateMemoryResponse> {
-  const raw = getRawDb();
+  const project = getProject();
 
-  // Fetch existing row to compare content and get rowid
-  const existing = raw
-    .prepare(
-      'SELECT rowid, id, content, metadata, agent_run, created_at FROM memories WHERE id = ?',
-    )
-    .get(id) as {
-    rowid: number;
-    id: string;
-    content: string;
-    metadata: string | null;
-    agent_run: string | null;
-    created_at: string | null;
-  } | null;
+  const existing = await getDb()
+    .select({
+      id: memories.id,
+      content: memories.content,
+      metadata: memories.metadata,
+      agentRun: memories.agentRun,
+      createdAt: memories.createdAt,
+    })
+    .from(memories)
+    .where(and(eq(memories.project, project), eq(memories.id, id)))
+    .limit(1);
 
-  if (!existing) {
+  const current = existing[0];
+  if (!current) {
     throw new Error(`Memory not found: ${id}`);
   }
 
-  const needsEmbeddingUpdate = body.content !== undefined && body.content !== existing.content;
+  const contentChanged = body.content !== undefined && body.content !== current.content;
 
-  // Embed BEFORE opening the transaction. Doing it inside held the SQLite
-  // write lock across a network round-trip to Ollama (up to its 30s timeout),
-  // blocking every other writer for the duration — and a failure there left
-  // the transaction open.
-  const newEmbedding = needsEmbeddingUpdate
-    ? await getEmbedding(body.content as string)
-    : undefined;
+  const embedding = contentChanged
+    ? toEmbeddingVector(await getEmbedding(body.content as string))
+    : null;
 
-  const updates: string[] = [];
-  const params: (string | number)[] = [];
-
-  if (body.content !== undefined) {
-    updates.push('content = ?');
-    params.push(body.content);
-  }
-  if (body.metadata !== undefined) {
-    updates.push('metadata = ?');
-    params.push(JSON.stringify(body.metadata));
+  const patch: Partial<typeof memories.$inferInsert> = {};
+  if (body.content !== undefined) patch.content = body.content;
+  if (body.metadata !== undefined) patch.metadata = body.metadata;
+  if (embedding) {
+    patch.embedding = embedding;
+    // CHECK (dims = vector_dims(embedding)) rejects the update unless both move.
+    patch.dims = getEmbeddingDimensions();
   }
 
-  inTransaction(raw, () => {
-    if (updates.length > 0) {
-      params.push(id);
-      raw.prepare(`UPDATE memories SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  return inTransaction(async (tx) => {
+    if (Object.keys(patch).length > 0) {
+      await tx
+        .update(memories)
+        .set(patch)
+        .where(and(eq(memories.project, project), eq(memories.id, id)));
     }
-    // If content changed, update the embedding vector row by matched rowid
-    if (newEmbedding) {
-      raw
-        .prepare('UPDATE vec_memories SET embedding = ? WHERE rowid = ?')
-        .run(new Uint8Array(newEmbedding.buffer), existing.rowid);
+    const updated = await tx
+      .select({
+        id: memories.id,
+        content: memories.content,
+        metadata: memories.metadata,
+        agentRun: memories.agentRun,
+        createdAt: memories.createdAt,
+      })
+      .from(memories)
+      .where(and(eq(memories.project, project), eq(memories.id, id)))
+      .limit(1);
+
+    const row = updated[0];
+    if (!row) {
+      throw new Error(`Memory not found: ${id}`);
     }
+    return {
+      id: row.id,
+      content: row.content,
+      metadata: row.metadata,
+      agentRun: row.agentRun,
+      createdAt: row.createdAt.toISOString(),
+    };
   });
-
-  // Re-read the updated row to return it
-  const updatedRow = raw
-    .prepare('SELECT id, content, metadata, agent_run, created_at FROM memories WHERE id = ?')
-    .get(id) as {
-    id: string;
-    content: string;
-    metadata: string | null;
-    agent_run: string | null;
-    created_at: string | null;
-  };
-
-  return {
-    id: updatedRow.id,
-    content: updatedRow.content,
-    metadata: updatedRow.metadata ? safeParseJson(updatedRow.metadata) : null,
-    agentRun: updatedRow.agent_run,
-    createdAt: updatedRow.created_at,
-  };
 }
 
 // ---------------------------------------------------------------------------
-// Delete memory (both tables atomically via rowid)
+// Delete memory
 
 export async function handleDeleteMemory(id: string): Promise<DeleteMemoryResponse> {
-  const raw = getRawDb();
+  const project = getProject();
+  const scope = and(eq(memories.project, project), eq(memories.id, id));
 
-  // Resolve rowid from memories table first
-  const existing = raw.prepare('SELECT rowid FROM memories WHERE id = ?').get(id) as {
-    rowid: number;
-  } | null;
-
-  if (!existing) {
-    throw new Error(`Memory not found: ${id}`);
-  }
-
-  // Delete from both tables atomically using the resolved rowid
-  inTransaction(raw, () => {
-    raw.prepare('DELETE FROM vec_memories WHERE rowid = ?').run(existing.rowid);
-    raw.prepare('DELETE FROM memories WHERE id = ?').run(id);
+  return inTransaction(async (tx) => {
+    const deleted = await tx.delete(memories).where(scope).returning({ id: memories.id });
+    if (deleted.length === 0) {
+      throw new Error(`Memory not found: ${id}`);
+    }
+    return { deleted: true as const };
   });
-
-  return { deleted: true };
 }
 
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? 'nomic-embed-text';
 
 export async function handleHealth(): Promise<{ ok: boolean }> {
-  getRawDb(); // ensure DB is initialised
+  try {
+    await pingDatabase();
+  } catch (e) {
+    console.error(`[memory] health: database unreachable: ${(e as Error).message}`);
+    return { ok: false };
+  }
 
   try {
     const res = await ollamaFetch('/api/tags', {
@@ -454,15 +388,4 @@ export async function handleHealth(): Promise<{ ok: boolean }> {
   }
 
   return { ok: true };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-
-function safeParseJson(raw: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }

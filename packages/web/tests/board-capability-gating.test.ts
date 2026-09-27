@@ -1,10 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import * as kube from '../src/server/kube.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
-const TEST_DATA_DIR = join('/tmp', `percussionist-board-capability-${Date.now()}`);
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.AUTH_DISABLED = '1';
 
 const PROJECT = {
@@ -24,7 +21,7 @@ let validateSpy: ReturnType<typeof spyOn>;
 let createTaskSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
+  await createTestDb();
 
   getProjectSpy = spyOn(kube, 'getProject').mockResolvedValue(PROJECT);
   validateSpy = spyOn(kube, 'validateAgentTaskCapability').mockResolvedValue({
@@ -50,9 +47,8 @@ beforeEach(() => {
   createTaskSpy.mockClear();
 });
 
-afterAll(() => {
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
+afterAll(async () => {
+  await closeTestDb();
   delete process.env.AUTH_DISABLED;
   getProjectSpy.mockRestore();
   validateSpy.mockRestore();

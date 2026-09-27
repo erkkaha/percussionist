@@ -9,8 +9,9 @@ const activity = new Hono();
 
 // ---------------------------------------------------------------------------
 // GET /api/activity
-activity.get('/', auth(), (c) => {
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '200', 10), 500);
+activity.get('/', auth(), async (c) => {
+  const parsedLimit = Number.parseInt(c.req.query('limit') ?? '200', 10);
+  const limit = Number.isNaN(parsedLimit) ? 200 : Math.min(Math.max(parsedLimit, 1), 500);
   const project = c.req.query('project');
   const before = c.req.query('before');
   const db = getDb();
@@ -24,17 +25,16 @@ activity.get('/', auth(), (c) => {
   }
 
   // Order by the same key the `before` cursor filters on (id DESC, not
-  // createdAt): taskEvents.createdAt is datetime('now') at second resolution,
-  // so events written in the same second share a createdAt while their ids
+  // createdAt): taskEvents.createdAt has millisecond resolution, so events
+  // written in the same millisecond can share a createdAt while their ids
   // (autoincrement) diverge from it — ordering by createdAt would make cursor
   // pages skip/repeat events.
-  const rows = db
+  const rows = await db
     .select()
     .from(taskEvents)
     .where(conditions.length > 0 ? and(...(conditions as [ReturnType<typeof eq>])) : undefined)
     .orderBy(desc(taskEvents.id))
-    .limit(limit)
-    .all();
+    .limit(limit);
 
   return c.json({ events: rows, count: rows.length });
 });

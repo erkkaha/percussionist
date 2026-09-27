@@ -2,7 +2,7 @@
 
 ## Overview
 
-Percussionist uses a **four-layer testing model** to balance speed, confidence, and coverage across development workflows: unit tests (fastest), integration/smoke tests, deterministic E2E (core lane), and extended E2E (deep lane). Each layer has explicit responsibility boundaries and deterministic pass/fail criteria.
+Percussionist uses a **five-layer testing model** to balance speed, confidence, and coverage across development workflows: unit tests (fastest), integration/smoke tests, live PostgreSQL, deterministic E2E (core lane), and extended E2E (deep lane). Each layer has explicit responsibility boundaries and deterministic pass/fail criteria.
 
 ## Layers
 
@@ -49,10 +49,58 @@ grows a third consumer, consolidate into a shared test package.
 
 - Run via `pnpm test` (co-located with unit tests in the same package).
 - Framework: Bun test.
-- Uses in-memory or temp-dir equivalents of external dependencies (e.g., SQLite DB in `/tmp`, Hono app's `app.request()` instead of HTTP server binding).
+- Uses PGlite WASM for PostgreSQL-backed web and memory tests, and the Hono app's `app.request()` instead of HTTP server binding.
 - Example: web dashboard smoke tests that exercise board API, stats ingestion, and session endpoints against the real Hono app with a temp DB.
 
-**Responsibility:** Verify component integration contracts. Fast feedback (< 30s total).
+**Responsibility:** Verify component integration contracts.
+
+**On timing:** `pnpm test` runs all four non-cluster layers and takes roughly
+1.5–2 minutes, of which the web suite is about two thirds. That is almost
+entirely PGlite: every test file boots its own WASM PostgreSQL instance and
+applies the committed migrations to it, and no amount of parallelism shares that
+boot. Treat ~2 min as the tier's budget rather than chasing it down — a shared
+cross-file database would reintroduce exactly the ordering coupling that
+`--isolate` exists to prevent (see the `--isolate` section in `AGENTS.md`). If a
+change adds more files that need a database, that is the signal to revisit the
+harness, not to loosen isolation.
+
+### Layer 2b — Live PostgreSQL (`packages/{web,memory-service}/**/postgres-live.test.ts`)
+
+**Scope:** The parts of the PostgreSQL path PGlite structurally cannot exercise.
+
+PGlite is PostgreSQL compiled to WASM: one connection, no server-side catalogue
+behaviour, and its own pgvector build. That hides four classes of bug, all of
+which have bitten this repo at least once:
+
+- `pg_advisory_lock` contention (how the web pod and N memory pods serialise
+  migrations at startup) — impossible to reproduce on a single connection
+- the `pg.Pool` path itself: reuse, `pool.end()`, and refusing work after close
+- `CREATE EXTENSION vector` and pgvector's own DDL rules — e.g. an HNSW index
+  cannot be built on an unbounded `vector` column, which is why the memory
+  schema indexes the cast expression
+- driver-level type mapping (a `timestamptz` that arrives as a string instead of
+  a `Date`, a `numeric` distance that arrives as a string)
+
+Both files **skip** unless `PERCUSSIONIST_TEST_PG_URL` is set, so `pnpm test` and
+CI's unit lane are unaffected:
+
+```bash
+docker run -d --name pcs-pg -p 55432:5432 \
+  -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=pcs pgvector/pgvector:0.8.6-pg18
+export PERCUSSIONIST_TEST_PG_URL=postgresql://postgres:pw@localhost:55432/pcs
+bun test --isolate --preload ./tests/setup.ts packages/web/tests/postgres-live.test.ts
+bun test --isolate packages/memory-service/src/__tests__/postgres-live.test.ts
+```
+
+**Point it at a disposable database.** The web suite drops `public` and the
+`drizzle` journal; the memory suite drops the `memories` table. Never use a URL
+with data you care about. If a test needs a fresh cluster rather than a fresh
+schema, recreate the container — dropping pgvector's extension objects in place
+can leave an orphaned `vector` type behind.
+
+**When to add a case here:** any change to the `pg` driver setup, the migration
+or lock code, the pgvector schema, or the auth adapter's provider. A PGlite-only
+suite is not sufficient evidence for those.
 
 ### Layer 3 — Deterministic E2E (`tests/e2e/e2e-*.test.ts`) — Core Lane
 
@@ -158,6 +206,8 @@ A test should pass regardless of which LLM provider or model is configured. The 
 | `pnpm build` | Build all packages (`tsc -b`) |
 | `pnpm typecheck` | Type-check all packages via `tsc -b` |
 | `pnpm test` | Run unit + smoke tests across all packages (bun:test) |
+| `PERCUSSIONIST_TEST_PG_URL=… bun test --isolate --preload ./tests/setup.ts packages/web/tests/postgres-live.test.ts` | Live PostgreSQL tier, web (skips when the variable is unset) |
+| `PERCUSSIONIST_TEST_PG_URL=… bun test --isolate packages/memory-service/src/__tests__/postgres-live.test.ts` | Live PostgreSQL tier, memory service (skips when unset) |
 | `pnpm e2e:core` | Run deterministic E2E suites on a live cluster |
 | `pnpm e2e:extended` | Run extended E2E suites (feature branching, dependencies) |
 | `pnpm e2e` | Aggregate: runs every file in `tests/e2e/` (identical to `pnpm e2e:extended`) |

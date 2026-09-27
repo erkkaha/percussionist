@@ -20,7 +20,7 @@ Percussionist orchestrates OpenCode AI agents on Kubernetes with a controller-ba
 │  │ │Dispatcher │ │                   │
 │  │ │Init       │ │  ┌──────────────┐  │
 │  │ └───────────┘ │  │ Memory Svc   │  │
-│  └───────────────┘  │ (Bun+sqlite) │  │
+│  └───────────────┘  │ (Bun+Drizzle) │  │
 │                     └──────┬───────┘  │
 │                            │          │
 │                     ┌──────▼───────┐  │
@@ -39,7 +39,7 @@ Percussionist orchestrates OpenCode AI agents on Kubernetes with a controller-ba
 | 3 | `@percussionist/operator` | Run reconciler; creates Pods, Services, ConfigMaps |
 | 4 | `@percussionist/dispatcher` | Sidecar; session lifecycle, SSE streaming |
 | 5 | `@percussionist/manager-controller` | Project board controller + decision engine + MCP server |
-| 6 | `@percussionist/memory-service` | Per-project vector embedding server (Bun + sqlite-vec) |
+| 6 | `@percussionist/memory-service` | Per-project vector embedding server (Bun + PostgreSQL/pgvector) |
 | 7 | `@percussionist/web` | Hono + React dashboard, REST APIs, stats DB |
 | 8 | `@percussionist/cli` | `beatctl` CLI; talks to K8s API directly |
 | 9 | `@percussionist/runner-claude` | Claude Agent SDK runner sidecar (alternative engine) |
@@ -86,7 +86,7 @@ Both controllers use `makeInformer` + in-memory work queue pattern. They are sin
 | K8s Client | `@kubernetes/client-node` |
 | API Framework | Hono (web), raw `node:http` (manager MCP/chat) |
 | Frontend | React 19, Tailwind CSS v4, shadcn/ui |
-| Database | SQLite via Drizzle ORM (web), sqlite-vec (memory) |
+| Database | PostgreSQL via Drizzle ORM (web), PostgreSQL/pgvector (memory) |
 | Package Manager | pnpm (monorepo) |
 | Linting | Biome |
 

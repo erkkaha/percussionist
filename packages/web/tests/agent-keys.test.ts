@@ -5,16 +5,12 @@
 // held the shared dashboard token, so a compromised run pod could read secrets,
 // delete projects and trigger upgrades.
 //
-// These tests mint real keys through better-auth against a temporary SQLite DB,
-// so they cover the actual verification path (hashing, expiry, permission
-// matching) rather than a stub.
+// These tests mint real keys through better-auth against a real in-memory
+// PGlite, so they cover the actual verification path (hashing, expiry,
+// permission matching) rather than a stub.
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 
-const TEST_DATA_DIR = join('/tmp', `percussionist-agent-keys-${Date.now()}`);
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.SESSION_SECRET = 'test-session-secret-for-agent-keys';
 process.env.WEB_BASE_URL = 'http://localhost:8080';
 // Auth must be enforced, and the legacy shared secret must NOT be accepted —
@@ -23,13 +19,12 @@ delete process.env.AUTH_DISABLED;
 delete process.env.LEGACY_TOKEN_AUTH;
 delete process.env.AUTH_SECRET;
 
-mkdirSync(TEST_DATA_DIR, { recursive: true });
-
 const { createApp } = await import('../src/server/app.js');
 const { mintKey } = await import('../src/server/lib/agent-keys.js');
-const { RUN_KEY_PERMISSIONS, OPERATOR_KEY_PERMISSIONS } = await import(
+const { RUN_KEY_PERMISSIONS, OPERATOR_KEY_PERMISSIONS, resetAuth } = await import(
   '../src/server/lib/better-auth.js'
 );
+const { closeTestDb, createTestDb } = await import('./helpers/pglite.js');
 
 const app = createApp();
 
@@ -44,6 +39,10 @@ let legacyRunKey: string;
 let operatorKey: string;
 
 beforeAll(async () => {
+  // better-auth's drizzle adapter binds getDb() at build time, so the database
+  // must be installed before the first key is minted.
+  await createTestDb();
+  resetAuth();
   runKey = await mintKey({
     name: 'run:agent-keys-run',
     permissions: RUN_KEY_PERMISSIONS,
@@ -59,8 +58,11 @@ beforeAll(async () => {
   });
 });
 
-afterAll(() => {
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+afterAll(async () => {
+  await closeTestDb();
+  resetAuth();
+  delete process.env.SESSION_SECRET;
+  delete process.env.WEB_BASE_URL;
 });
 
 function withKey(key: string, extra: Record<string, string> = {}): Record<string, string> {

@@ -1,0 +1,142 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: percussionist-postgres
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: percussionist-postgres
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: percussionist-postgres
+  replicas: 1
+  # RollingUpdate (the StatefulSet default) is deliberate: postgres must be
+  # restarted in place so it keeps its PVC identity, and the Deployment
+  # Recreate convention used elsewhere in k8s/deploy does not apply to a
+  # StatefulSet controller.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: percussionist
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: percussionist
+        app.kubernetes.io/component: postgres
+    spec:
+      containers:
+        - name: postgres
+          # PostgreSQL 18 + pgvector 0.8.6. The pgvector version is pinned
+          # alongside the PG major: extension builds are per-major, so a pgvector
+          # release that predates a PG major has no tag for it (0.8.0 has no
+          # -pg18 build). PG 18 is the current major; bump both together.
+          image: pgvector/pgvector:0.8.6-pg18
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: percussionist-db
+                  key: username
+                  optional: false
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: percussionist-db
+                  key: database
+                  optional: false
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: percussionist-db
+                  key: password
+                  optional: false
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            # Connection budget. The web pod and every memory-{project} pod open
+            # their own pool — both read DATABASE_POOL_MAX (default 10, the
+            # operator sets 2 for memory pods) — so the ceiling has to exceed
+            # 10 * (1 + number of projects with embedding enabled) plus headroom
+            # for migrations, psql and superuser_reserved_connections.
+            - name: PGMAXCONNECTIONS
+              value: "200"
+          args:
+            - -c
+            - max_connections=$(PGMAXCONNECTIONS)
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            # initdb on a fresh 20Gi volume plus the first WAL checkpoint; the
+            # readiness probe below only starts once this passes.
+            failureThreshold: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: percussionist
+          app.kubernetes.io/component: postgres
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        # No storageClassName: provisioned with the cluster default, like every
+        # other PVC in this repo. `standard` only exists on minikube/k3s and
+        # hard-coding it breaks clusters whose default is named differently.
+        # Override with `beatctl deploy --database-storage-class <name>`, which
+        # patches this field after apply.
+        resources:
+          requests:
+            storage: 20Gi

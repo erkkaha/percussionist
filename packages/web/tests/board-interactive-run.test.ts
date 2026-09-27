@@ -20,6 +20,7 @@ import { eq } from 'drizzle-orm';
 import type { Hono } from 'hono';
 import { getDb, taskEvents } from '../src/server/db.js';
 import * as kube from '../src/server/kube.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 const PROJECT_NAME = 'test-proj';
 const TASK_NAME = `${PROJECT_NAME}-build-abcd01`;
@@ -62,13 +63,9 @@ async function postInteractiveRun(body?: unknown) {
   });
 }
 
-function eventRows(taskName: string): number {
-  return getDb()
-    .select()
-    .from(taskEvents)
-    .where(eq(taskEvents.project, PROJECT_NAME))
-    .all()
-    .filter((r) => r.taskName === taskName).length;
+async function eventRows(taskName: string): Promise<number> {
+  const rows = await getDb().select().from(taskEvents).where(eq(taskEvents.project, PROJECT_NAME));
+  return rows.filter((r) => r.taskName === taskName).length;
 }
 
 let app: Hono;
@@ -77,6 +74,9 @@ let getTaskSpy: ReturnType<typeof spyOn>;
 let patchTaskSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
+  // The database is async now: bootstrap it before anything reads it, or the
+  // first getDb() throws instead of returning a handle.
+  await createTestDb();
   mkdirSync(TEST_DATA_DIR, { recursive: true });
   getProjectSpy = spyOn(kube, 'getProject').mockResolvedValue(MOCK_PROJECT);
   getTaskSpy = spyOn(kube, 'getTask').mockResolvedValue(makeTask('running'));
@@ -85,20 +85,21 @@ beforeAll(async () => {
   app = createApp();
 });
 
-afterAll(() => {
+afterAll(async () => {
   getProjectSpy.mockRestore();
   getTaskSpy.mockRestore();
   patchTaskSpy.mockRestore();
+  await closeTestDb();
   rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   delete process.env.DATA_DIR;
   delete process.env.AUTH_DISABLED;
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   getProjectSpy.mockResolvedValue(MOCK_PROJECT);
   getTaskSpy.mockResolvedValue(makeTask('running'));
   patchTaskSpy.mockClear();
-  getDb().delete(taskEvents).run();
+  await getDb().delete(taskEvents);
 });
 
 describe('POST /api/projects/:project/board/tasks/:taskName/interactive-run', () => {
@@ -118,7 +119,7 @@ describe('POST /api/projects/:project/board/tasks/:taskName/interactive-run', ()
     expect(stored.id).toMatch(/^[a-z0-9]{8}$/);
     expect(body.runName).toBe(interactiveRunName(PROJECT_NAME, TASK_NAME, stored.id ?? ''));
 
-    expect(eventRows(TASK_NAME)).toBe(1);
+    expect(await eventRows(TASK_NAME)).toBe(1);
   });
 
   it('preserves existing annotations and forwards agent/model/timeout overrides', async () => {
@@ -154,7 +155,7 @@ describe('POST /api/projects/:project/board/tasks/:taskName/interactive-run', ()
 
     expect(res.status).toBe(400);
     expect(patchTaskSpy).not.toHaveBeenCalled();
-    expect(eventRows(TASK_NAME)).toBe(0);
+    expect(await eventRows(TASK_NAME)).toBe(0);
   });
 
   it('rejects an idea task with 400 and no write', async () => {
@@ -164,7 +165,7 @@ describe('POST /api/projects/:project/board/tasks/:taskName/interactive-run', ()
 
     expect(res.status).toBe(400);
     expect(patchTaskSpy).not.toHaveBeenCalled();
-    expect(eventRows(TASK_NAME)).toBe(0);
+    expect(await eventRows(TASK_NAME)).toBe(0);
   });
 
   it('rejects an invalid timeout override with 400', async () => {
@@ -189,6 +190,6 @@ describe('POST /api/projects/:project/board/tasks/:taskName/interactive-run', ()
 
     expect(res.status).toBe(404);
     expect(patchTaskSpy).not.toHaveBeenCalled();
-    expect(eventRows(TASK_NAME)).toBe(0);
+    expect(await eventRows(TASK_NAME)).toBe(0);
   });
 });

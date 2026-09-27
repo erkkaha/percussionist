@@ -18,17 +18,15 @@
 //
 // The kube helpers (getRun / readSessionConfigMap / fetchSessionMessages /
 // postSessionMessage) are spied before the router is imported; the stats DB is
-// a real temp SQLite so the replay path executes for real.
+// a real in-memory PGlite so the replay path executes for real.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { Hono } from 'hono';
-import { closeDb, getDb, messages, runs } from '../src/server/db.js';
+import { getDb, messages, runs } from '../src/server/db.js';
 import * as kube from '../src/server/kube.js';
 import { resetAuth } from '../src/server/lib/better-auth.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
-const TEST_DATA_DIR = join('/tmp', `percussionist-session-fallback-${Date.now()}`);
 const prevAuthDisabled = process.env.AUTH_DISABLED;
 process.env.AUTH_DISABLED = '1';
 
@@ -49,35 +47,29 @@ let readSessionConfigMapSpy: ReturnType<typeof spyOn>;
 let fetchSessionMessagesSpy: ReturnType<typeof spyOn>;
 let fetchSpy: ReturnType<typeof spyOn>;
 
-function seedDbSession(sessionID: string, name: string): void {
+async function seedDbSession(sessionID: string, name: string): Promise<void> {
   const db = getDb();
-  db.insert(runs)
-    .values({
-      id: sessionID,
-      name,
-      agent: 'builder',
-      phase: 'Succeeded',
-      startedAt: '2024-01-01T00:00:00Z',
-      tokensIn: 10,
-      tokensOut: 5,
-    })
-    .run();
-  db.insert(messages)
-    .values({
-      id: `${sessionID}-m0`,
-      sessionId: sessionID,
-      idx: 0,
-      role: 'user',
-      content: JSON.stringify([{ type: 'text', text: 'hello from db' }]),
-      model: 'openai/gpt-4o',
-    })
-    .run();
+  await db.insert(runs).values({
+    id: sessionID,
+    name,
+    agent: 'builder',
+    phase: 'Succeeded',
+    startedAt: '2024-01-01T00:00:00Z',
+    tokensIn: 10,
+    tokensOut: 5,
+  });
+  await db.insert(messages).values({
+    id: `${sessionID}-m0`,
+    sessionId: sessionID,
+    idx: 0,
+    role: 'user',
+    content: JSON.stringify([{ type: 'text', text: 'hello from db' }]),
+    model: 'openai/gpt-4o',
+  });
 }
 
 beforeAll(async () => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
-  process.env.DATA_DIR = TEST_DATA_DIR;
-  closeDb();
+  await createTestDb();
   resetAuth();
 
   getRunSpy = spyOn(kube, 'getRun');
@@ -90,15 +82,13 @@ beforeAll(async () => {
   app.route('/api/runs', sessionRouter);
 });
 
-afterAll(() => {
+afterAll(async () => {
   getRunSpy.mockRestore();
   readSessionConfigMapSpy.mockRestore();
   fetchSessionMessagesSpy.mockRestore();
   fetchSpy.mockRestore();
-  closeDb();
+  await closeTestDb();
   resetAuth();
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
   if (prevAuthDisabled !== undefined) process.env.AUTH_DISABLED = prevAuthDisabled;
   else delete process.env.AUTH_DISABLED;
 });
@@ -203,7 +193,7 @@ describe('GET /api/runs/:name/session fallback chain', () => {
   });
 
   it('replays from the stats DB when snapshot and live both fail (source: db)', async () => {
-    seedDbSession('sess-db-3', 'run-3');
+    await seedDbSession('sess-db-3', 'run-3');
     getRunSpy.mockResolvedValue({
       metadata: {},
       status: { serviceName: 'run-svc', sessionID: 'sess-db-3' },
@@ -229,7 +219,7 @@ describe('GET /api/runs/:name/session fallback chain', () => {
   });
 
   it('replays from the stats DB for a Run CR deleted by the TTL (source: db)', async () => {
-    seedDbSession('sess-db-4', 'run-4');
+    await seedDbSession('sess-db-4', 'run-4');
     // Run CR gone → getRun 404s; the route looks the session ID up in the DB.
     getRunSpy.mockRejectedValue(kube404);
     readSessionConfigMapSpy.mockResolvedValue(null);

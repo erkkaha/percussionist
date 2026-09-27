@@ -69,8 +69,9 @@ export const OPERATOR_KEY_PERMISSIONS: Record<string, string[]> = { runkeys: ['m
 // ---------------------------------------------------------------------------
 // Instance singleton
 //
-// Lazy, because getDb() applies pending migrations on first call and must not
-// run at import time (app.ts is imported by tests that never touch the DB).
+// Lazy, because the database applies pending migrations when it is opened and
+// must not be opened at import time (app.ts is imported by tests that never
+// touch the DB).
 
 let _auth: ReturnType<typeof buildAuth> | null = null;
 
@@ -109,7 +110,7 @@ function buildAuth() {
   return betterAuth({
     baseURL,
     secret: process.env.SESSION_SECRET ?? process.env.BETTER_AUTH_SECRET,
-    database: drizzleAdapter(getDb(), { provider: 'sqlite', schema }),
+    database: drizzleAdapter(getDb(), { provider: 'pg', schema }),
 
     // Accept the canonical origin plus loopback, so a `beatctl web` port-forward
     // (which lands on a random localhost port) can still call the API and run
@@ -270,7 +271,7 @@ export function getAuth(): ReturnType<typeof buildAuth> {
   return _auth;
 }
 
-/** Test seam — drops the cached instance so a fresh DATA_DIR is picked up. */
+/** Test seam — drops the cached instance so a fresh database is picked up. */
 export function resetAuth(): void {
   _auth = null;
 }

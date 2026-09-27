@@ -93,7 +93,7 @@ spec:
     kind: OCIRepository
     name: percussionist
 ---
-# Control plane: operator, manager, web, agent-config, network policy.
+# Control plane: PostgreSQL, operator, manager, web, agent-config, network policy.
 #
 # `dependsOn` plus `wait: true` on the CRD Kustomization above is what fixes
 # the silent-pruning bug in the pre-GitOps upgrade path: new controllers never
@@ -127,6 +127,10 @@ spec:
     - apiVersion: apps/v1
       kind: Deployment
       name: percussionist-web
+      namespace: percussionist
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: percussionist-postgres
       namespace: percussionist
   # Cluster-specific values live here rather than in k8s/deploy/, so that
   # directory stays valid for a plain `kubectl apply` on non-GitOps installs.

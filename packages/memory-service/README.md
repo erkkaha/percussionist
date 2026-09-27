@@ -5,23 +5,61 @@ Per-project vector embedding service for semantic memory and context retrieval.
 ## Overview
 
 The memory service is a standalone Bun server that provides vector embeddings
-via Ollama and stores them in a local SQLite database backed by sqlite-vec.
+via Ollama and stores them in PostgreSQL with [pgvector](https://github.com/pgvector/pgvector),
+through Drizzle ORM.
+
+- Production: `pg.Pool` via `drizzle-orm/node-postgres` (selected by `DATABASE_URL`)
+- Tests and local dev: an in-process [PGlite](https://pglite.dev) instance with
+  the pgvector extension compiled in, wired through `drizzle-orm/pglite` (set
+  `PERCUSSIONIST_ALLOW_PGLITE=1` when no `DATABASE_URL` is available)
+- Every query is scoped by `MEMORY_PROJECT`, so one database can back several
+  memory services without mixing their memories (the operator supplies the
+  Project UID, not a reusable name)
 
 ## Environment
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MEMORY_SERVICE_PORT` | `4100` | HTTP listen port |
-| `MEMORY_DB_PATH` | `/data/memory/vectors.db` | SQLite database path |
+| `DATABASE_URL` | — | PostgreSQL connection string. Required outside tests; set `PERCUSSIONIST_ALLOW_PGLITE=1` for local PGlite |
+| `DATABASE_POOL_MAX` | `10` | `pg.Pool` max connections |
+| `MEMORY_PROJECT` | `default` | Project scope for every query |
+| `MEMORY_MIGRATIONS_DIR` | `./migrations` | Where the drizzle migrator reads migrations from |
 | `OLLAMA_BASE_URL` | `http://ollama.percussionist.svc.cluster.local:11434` | Ollama API endpoint |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model name |
-| `EMBEDDING_DIMENSIONS` | `768` | Vector dimension count (must match the model's output) |
+| `EMBEDDING_DIMENSIONS` | `768` | Vector width the embedding model must return (positive integer) |
 | `PERCUSSIONIST_NAMESPACE` | `percussionist` | Cluster namespace |
+
+### Embedding dimensions
+
+`memories.embedding` is a bare `vector` column with no typmod, so the width is a
+runtime setting (`spec.embedding.dimensions` → `EMBEDDING_DIMENSIONS`), not part
+of the schema — switching embedding models needs no migration.
+
+Two checks keep that from becoming a silent mismatch:
+
+- every write validates the vector it was handed against the configured width
+  before it reaches the database, so a model that returns the wrong number of
+  dimensions fails the request instead of storing an unusable vector;
+- startup compares the configured width against `vector_dims()` of the project's
+  stored vectors and refuses to serve when they disagree, because a project that
+  changed models would otherwise fail every search inside pgvector. Re-embed the
+  existing memories, or point the project back at its original model.
+
+### Distance semantics
+
+`distance` is pgvector's **cosine distance** (`<=>`): `0` means identical
+direction, `2` means opposite, and `1 - distance` is the cosine similarity that
+`POST /context` reports as `relevance`. `GET /memories` and `GET /memory/:id`
+return `distance: 0`, as before — those endpoints do not search.
 
 ## API
 
 ### `GET /health`
-Health check. Returns `{ "ok": true }`.
+Health check. Queries the database and checks that the embedding model is
+present in Ollama: `{ "ok": true }` with `200` when both are fine, otherwise
+`{ "ok": false }` with `503`. Open (unauthenticated) so kubelet probes work
+without the control-plane token.
 
 ### `POST /memory`
 Store a memory with semantic embedding.
@@ -49,7 +87,9 @@ Semantic search across stored memories.
 }
 ```
 
-The optional `task` field filters results to memories whose `metadata.task` matches the given value.
+The optional `task` field filters results to memories whose `metadata.task` matches
+the given value. The filter is applied before the limit, so a filtered search
+still returns up to `limit` matching memories.
 
 **Response:**
 ```json
@@ -148,7 +188,7 @@ Both `content` and `metadata` are optional — provide only the fields you want 
 ```
 
 ### `DELETE /memory/:id`
-Delete a memory and its associated embedding vector atomically. Returns a not-found error if the ID does not exist.
+Delete a memory and its embedding. Returns a not-found error if the ID does not exist in the current project.
 
 **Response:**
 ```json
@@ -157,19 +197,35 @@ Delete a memory and its associated embedding vector atomically. Returns a not-fo
 
 ## Database
 
-Two tables are created on startup:
+One table, created by the migrations in [`migrations/`](./migrations):
 
-- `memories` — contains the raw text content, metadata JSON, and timestamps
-- `vec_memories` — virtual table (vec0 extension) with 768-dimensional float
-  embeddings
+- `memories` — `(project, id)` primary key, `content`, `metadata` (jsonb),
+  `agent_run`, `embedding vector`, `created_at`
 
-The vector table is created via raw SQL DDL since sqlite-vec's vec0 extension
-requires non-standard `CREATE VIRTUAL TABLE` syntax.
+Content and embedding share the row, so storing, updating and deleting a memory
+is one statement and the two can never drift apart.
+
+### Migrations
+
+`migrations/` is generated from `src/schema.ts` and applied on startup by the
+drizzle migrator — there is no separate migrate step:
+
+```bash
+pnpm db:generate   # regenerate after editing src/schema.ts
+```
+
+The baseline migration (`0000_*.sql`) starts with a hand-written
+`CREATE EXTENSION IF NOT EXISTS vector`; keep it first, since pgvector is not
+part of a vanilla PostgreSQL image and the `vector` column does not
+resolve without it.
+
+The migrations folder must be present wherever the service runs — including
+inside the container image, where it sits next to `dist/`
+(`MEMORY_MIGRATIONS_DIR` overrides the location).
 
 ## Embedding
 
 The service calls Ollama's `/api/embeddings` endpoint to generate vectors.
-Batch embedding is supported via `/api/embed` for multiple texts in one request.
 
 ## Image
 

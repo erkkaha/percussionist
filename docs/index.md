@@ -18,7 +18,7 @@ features:
     details: Every agent run gets its own git worktree. Remote mirrors with flock-serialized fetches. Local git workspaces for persistent, incremental development.
     link: /features/git-workspace
   - title: Vector Memory Service
-    details: Per-project semantic memory with sqlite-vec embeddings. Session summarization and context injection so agents retain knowledge across runs.
+    details: Per-project semantic memory with PostgreSQL/pgvector embeddings. Session summarization and context injection so agents retain knowledge across runs.
     link: /features/vector-memory
   - title: Feature Branch Workflow
     details: Per-task feature branches eliminate worktree conflicts. PLAN assignments pass to BUILD tasks. Predecessor dependencies enforce correct build ordering.

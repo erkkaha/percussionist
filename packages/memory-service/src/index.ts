@@ -1,12 +1,17 @@
 // Memory service — per-project vector embedding server.
 //
-// Stores memories with semantic embeddings in a local bun:sqlite database
-// backed by sqlite-vec for vector search. Exposes a REST API used by the
-// manager controller's MCP tools.
+// Stores memories with semantic embeddings in PostgreSQL (pgvector) via Drizzle
+// ORM, and exposes a REST API used by the manager controller's MCP tools.
 //
 // Environment:
 //   MEMORY_SERVICE_PORT  — HTTP port (default 4100, from @percussionist/api)
-//   MEMORY_DB_PATH       — SQLite database path (default /data/memory/vectors.db)
+//   DATABASE_URL         — PostgreSQL connection string. Required outside tests;
+//                          set PERCUSSIONIST_ALLOW_PGLITE=1 for local PGlite
+//   DATABASE_POOL_MAX    — pg.Pool size (default 10)
+//   MEMORY_PROJECT       — Project scope for every query (default "default");
+//                          required to isolate projects in a shared database
+//   MEMORY_MIGRATIONS_DIR— Override the migrations folder location
+//   EMBEDDING_DIMENSIONS — Vector width the embedding model must return (default 768)
 //   OLLAMA_BASE_URL      — Ollama service URL (default http://ollama:11434)
 //   EMBEDDING_MODEL      — Ollama embedding model (default nomic-embed-text)
 //   WARMUP_ENABLED       — Auto-warm embedding model on startup (default "true")
@@ -14,6 +19,7 @@
 //   WARMUP_MAX_RETRIES   — Retry count for transient failures (default 6)
 
 import { timingSafeEqual } from 'node:crypto';
+import { closeDb, initDb } from './db.js';
 import { isModelReady, warmupModel } from './model-warmup.js';
 import {
   handleContext,
@@ -24,7 +30,6 @@ import {
   handleSearch,
   handleStoreMemory,
   handleUpdateMemory,
-  initDb,
   ValidationError,
 } from './routes.js';
 
@@ -37,8 +42,15 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-// Initialise database and vector tables on startup
-initDb();
+// Connect and apply pending migrations before anything can serve a request: a
+// request against a half-migrated database is a 500 nobody can diagnose, and
+// the pool must exist before the health probe can query it.
+try {
+  await initDb();
+} catch (e) {
+  console.error(`[memory] database initialisation failed: ${(e as Error).message}`);
+  process.exit(1);
+}
 
 // ---------------------------------------------------------------------------
 // Model warmup — must complete before the service becomes ready.
@@ -212,5 +224,32 @@ function json(data: unknown, status = 200): Response {
 // ---------------------------------------------------------------------------
 // Start
 
-Bun.serve({ fetch: handler, port: PORT });
+const server = Bun.serve({ fetch: handler, port: PORT });
 console.log(`[memory] listening on :${PORT}`);
+
+// ---------------------------------------------------------------------------
+// Shutdown — stop accepting requests, drain the pg pool, then exit. Without
+// this the pod waited out its terminationGracePeriodSeconds for SIGKILL with
+// in-flight queries and an unclosed pool.
+
+let shuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[memory] ${signal} received, shutting down`);
+  try {
+    await server.stop();
+  } catch (e) {
+    console.error(`[memory] server.stop failed: ${(e as Error).message}`);
+  }
+  try {
+    await closeDb();
+  } catch (e) {
+    console.error(`[memory] database close failed: ${(e as Error).message}`);
+  }
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));

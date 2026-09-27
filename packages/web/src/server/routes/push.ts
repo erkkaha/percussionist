@@ -38,15 +38,15 @@ const AUTH_DISABLED_ERROR = {
   error: 'Push notifications require authentication to be enabled',
 } as const;
 
-push.get('/public-key', (c) => {
+push.get('/public-key', async (c) => {
   if (!userId(c)) return c.json(AUTH_DISABLED_ERROR, 501);
-  return c.json({ publicKey: getVapidKeys().publicKey });
+  return c.json({ publicKey: (await getVapidKeys()).publicKey });
 });
 
-push.get('/subscriptions', (c) => {
+push.get('/subscriptions', async (c) => {
   const uid = userId(c);
   if (!uid) return c.json(AUTH_DISABLED_ERROR, 501);
-  return c.json({ items: listSubscriptions(uid) });
+  return c.json({ items: await listSubscriptions(uid) });
 });
 
 interface SubscribeBody {
@@ -83,7 +83,7 @@ push.post('/subscriptions', async (c) => {
   }
 
   try {
-    saveSubscription(uid, sub, c.req.header('User-Agent'));
+    await saveSubscription(uid, sub, c.req.header('User-Agent'));
     return c.json({ ok: true }, 201);
   } catch (e) {
     console.error('[push] subscription save failed:', (e as Error).message);
@@ -104,7 +104,7 @@ push.delete('/subscriptions', async (c) => {
   const endpoint = typeof body.endpoint === 'string' ? body.endpoint : '';
   if (!endpoint) return c.json({ error: 'endpoint is required' }, 400);
 
-  return c.json({ removed: deleteSubscription(uid, endpoint) });
+  return c.json({ removed: await deleteSubscription(uid, endpoint) });
 });
 
 push.post('/test', async (c) => {

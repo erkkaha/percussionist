@@ -15,17 +15,16 @@
 // be set before the stats module is imported — hence the dynamic import below
 // (--isolate keeps the env change contained to this file).
 //
-// Each test opens its own temp DATA_DIR (getDb() is lazy and re-reads
-// process.env.DATA_DIR on every open after closeDb()), so every test seeds a
-// fresh DB — the hand-computed expectations below never interact with rows
+// Each test opens its own in-memory PGlite, so every test seeds a fresh
+// database — the hand-computed expectations below never interact with rows
 // seeded by another test.
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { closeDb, getDb, metricSnapshots, runs, toolCalls } from '../src/server/db.js';
+import { getDb, metricSnapshots, runs, toolCalls } from '../src/server/db.js';
 import { resetAuth } from '../src/server/lib/better-auth.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 process.env.AUTH_DISABLED = '1';
 process.env.RETENTION_DAYS = '1';
@@ -45,17 +44,11 @@ interface TestClient {
   seedSession: SeedSession;
 }
 
-const dataDirs: string[] = [];
-
-// Fresh temp DATA_DIR + app for an isolated test DB. The returned client's
+// Fresh in-memory PGlite + app for an isolated test DB. The returned client's
 // requests hit a Hono app mounted with only the stats router (auth is disabled
 // via AUTH_DISABLED=1).
-function makeClient(): TestClient {
-  const dataDir = join('/tmp', `percussionist-stats-metrics-${Date.now()}-${Math.random()}`);
-  dataDirs.push(dataDir);
-  mkdirSync(dataDir, { recursive: true });
-  process.env.DATA_DIR = dataDir;
-  closeDb();
+async function makeClient(): Promise<TestClient> {
+  await createTestDb();
   resetAuth();
 
   const app = new Hono();
@@ -78,23 +71,18 @@ async function seed(api: TestClient, payload: Parameters<SeedSession>[0]): Promi
   expect(res.status).toBe(200);
 }
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeTestDb();
   resetAuth();
-  delete process.env.DATA_DIR;
-  for (const dir of dataDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 beforeEach(() => {
   process.env.AUTH_DISABLED = '1';
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeTestDb();
   resetAuth();
-  delete process.env.DATA_DIR;
   delete process.env.RETENTION_DAYS;
 });
 
@@ -186,7 +174,7 @@ describe('GET /api/stats/tool-metrics', () => {
   }
 
   it('attributes each message tokensOut across the tool calls sharing that message', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     await seedBuilderAgent(api);
 
     const res = await api.req('/api/stats/tool-metrics?days=0&agent=builder');
@@ -244,7 +232,7 @@ describe('GET /api/stats/tool-metrics', () => {
   });
 
   it('merges rows across sessions and folds zero-output messages into the average', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     await seedBuilderAgent(api);
 
     const res = await api.req('/api/stats/tool-metrics?days=0');
@@ -301,7 +289,7 @@ describe('GET /api/stats/tool-metrics', () => {
   });
 
   it('filters by the 30-day createdAt window and by agent', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     await seed(api, {
       sessionID: 'tm-window-recent',
       run: {
@@ -320,28 +308,24 @@ describe('GET /api/stats/tool-metrics', () => {
     // A second, much older session for the same agent — inserted past the API
     // so its createdAt lands in 2020 (the route sets createdAt itself).
     const db = getDb();
-    db.insert(runs)
-      .values({
-        id: 'tm-window-old',
-        name: 'tm-window-old-run',
-        agent: 'windowtest',
-        phase: 'Succeeded',
-        startedAt: '2020-01-01T00:00:00Z',
-        createdAt: '2020-01-01T00:00:00Z',
-        tokensIn: 0,
-        tokensOut: 0,
-      })
-      .run();
-    db.insert(toolCalls)
-      .values({
-        id: 'tm-window-old-tc',
-        sessionId: 'tm-window-old',
-        messageIdx: 0,
-        tool: 'OldTool',
-        success: true,
-        durationMs: 5,
-      })
-      .run();
+    await db.insert(runs).values({
+      id: 'tm-window-old',
+      name: 'tm-window-old-run',
+      agent: 'windowtest',
+      phase: 'Succeeded',
+      startedAt: '2020-01-01T00:00:00Z',
+      createdAt: '2020-01-01T00:00:00Z',
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+    await db.insert(toolCalls).values({
+      id: 'tm-window-old-tc',
+      sessionId: 'tm-window-old',
+      messageIdx: 0,
+      tool: 'OldTool',
+      success: true,
+      durationMs: 5,
+    });
 
     const defaultWindow = (await (
       await api.req('/api/stats/tool-metrics?agent=windowtest')
@@ -424,7 +408,7 @@ describe('GET /api/stats/trends', () => {
   ];
 
   it('aggregates daily run/token/cost math and pivots model tokens', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     for (const s of seeds) {
       await seed(api, s);
     }
@@ -477,7 +461,7 @@ describe('GET /api/stats/trends', () => {
   });
 
   it('honours the days window (old runs dropped)', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     for (const s of seeds) {
       await seed(api, s);
     }
@@ -491,6 +475,62 @@ describe('GET /api/stats/trends', () => {
     };
     expect(body.trendPoints).toEqual([]);
     expect(body.modelTrendPoints).toEqual([]);
+  });
+
+  // runs.started_at is a text ISO-8601 string with an explicit Z. Casting it to
+  // timestamptz and then pinning `at time zone 'utc'` is what makes the day
+  // bucket UTC: without the second clause the bucket follows the session
+  // TimeZone, so a database running in Asia/Tokyo files a 23:30Z run under the
+  // next day. Dropping the clause is a real bug, not a simplification.
+  it('buckets days in UTC regardless of the session time zone', async () => {
+    const api = await makeClient();
+    const db = getDb();
+    // Late-evening UTC on the day the window is anchored to, so a
+    // timezone-dependent bucket would land on the following day.
+    const day = new Date();
+    const lateUtc = new Date(
+      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 23, 30, 0),
+    ).toISOString();
+    const earlyUtc = new Date(
+      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 0, 30, 0),
+    ).toISOString();
+
+    for (const [i, startedAt] of [lateUtc, earlyUtc].entries()) {
+      await seed(api, {
+        sessionID: `tz-${i}`,
+        run: {
+          name: `tz-run-${i}`,
+          startedAt,
+          completedAt: startedAt,
+          tokensIn: 100,
+          tokensOut: 100,
+        },
+        messages: [
+          {
+            id: `tz-msg-${i}`,
+            idx: 0,
+            role: 'assistant',
+            content: 'x',
+            model: 'openai/gpt-4o',
+            tokensIn: 100,
+            tokensOut: 100,
+            createdAt: startedAt,
+          },
+        ],
+        toolCalls: [],
+        fileOps: [],
+      });
+    }
+
+    for (const zone of ['UTC', 'Asia/Tokyo', 'America/New_York']) {
+      await db.execute(sql.raw(`set time zone '${zone}'`));
+      const res = await api.req('/api/stats/trends?days=1');
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { trendPoints: Array<{ date: string }> };
+      const today = lateUtc.slice(0, 10);
+      expect(body.trendPoints.map((p) => p.date)).toEqual([today]);
+    }
+    await db.execute(sql.raw(`set time zone 'UTC'`));
   });
 });
 
@@ -528,42 +568,40 @@ describe('GET /api/stats/metrics-timeseries', () => {
   // the window for runWindows.
   async function seedSnapshotsAndRuns(api: TestClient): Promise<void> {
     const db = getDb();
-    db.insert(metricSnapshots)
-      .values([
-        {
-          node: 'node-a',
-          cpuUsageMillicores: 1500,
-          memoryUsageBytes: 1073741824, // 1 GiB
-          cpuCapacityMillicores: 2000,
-          memoryCapacityBytes: 2147483648, // 2 GiB
-          recordedAt: atMinuteOffset(30, 10),
-        },
-        {
-          node: 'node-a',
-          cpuUsageMillicores: 1600,
-          memoryUsageBytes: 1073741824,
-          cpuCapacityMillicores: 2000,
-          memoryCapacityBytes: 2147483648,
-          recordedAt: atMinuteOffset(30, 40),
-        },
-        {
-          node: 'node-b',
-          cpuUsageMillicores: 1000,
-          memoryUsageBytes: 536870912, // 0.5 GiB
-          cpuCapacityMillicores: 2000,
-          memoryCapacityBytes: 2147483648,
-          recordedAt: atMinuteOffset(30, 20),
-        },
-        {
-          node: 'node-a',
-          cpuUsageMillicores: 1000,
-          memoryUsageBytes: 536870912,
-          cpuCapacityMillicores: 2000,
-          memoryCapacityBytes: 2147483648,
-          recordedAt: atMinuteOffset(90, 20),
-        },
-      ])
-      .run();
+    await db.insert(metricSnapshots).values([
+      {
+        node: 'node-a',
+        cpuUsageMillicores: 1500,
+        memoryUsageBytes: 1073741824, // 1 GiB
+        cpuCapacityMillicores: 2000,
+        memoryCapacityBytes: 2147483648, // 2 GiB
+        recordedAt: atMinuteOffset(30, 10),
+      },
+      {
+        node: 'node-a',
+        cpuUsageMillicores: 1600,
+        memoryUsageBytes: 1073741824,
+        cpuCapacityMillicores: 2000,
+        memoryCapacityBytes: 2147483648,
+        recordedAt: atMinuteOffset(30, 40),
+      },
+      {
+        node: 'node-b',
+        cpuUsageMillicores: 1000,
+        memoryUsageBytes: 536870912, // 0.5 GiB
+        cpuCapacityMillicores: 2000,
+        memoryCapacityBytes: 2147483648,
+        recordedAt: atMinuteOffset(30, 20),
+      },
+      {
+        node: 'node-a',
+        cpuUsageMillicores: 1000,
+        memoryUsageBytes: 536870912,
+        cpuCapacityMillicores: 2000,
+        memoryCapacityBytes: 2147483648,
+        recordedAt: atMinuteOffset(90, 20),
+      },
+    ]);
 
     await seed(api, {
       sessionID: 'ts-run-s1',
@@ -584,7 +622,7 @@ describe('GET /api/stats/metrics-timeseries', () => {
   }
 
   it('buckets per minute per node and averages across nodes', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     await seedSnapshotsAndRuns(api);
 
     const res = await api.req('/api/stats/metrics-timeseries?hours=2');
@@ -624,7 +662,7 @@ describe('GET /api/stats/metrics-timeseries', () => {
   });
 
   it('filters to a single node via ?node=', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     await seedSnapshotsAndRuns(api);
 
     const res = await api.req('/api/stats/metrics-timeseries?hours=2&node=node-a');
@@ -649,7 +687,7 @@ describe('GET /api/stats/metrics-timeseries', () => {
 
 describe('runRetentionCleanup', () => {
   it('deletes expired runs and cascades to children, keeping recent rows', async () => {
-    const api = makeClient();
+    const api = await makeClient();
 
     // Old run — startedAt far before the 1-day cutoff, with all three child
     // table types attached.
@@ -691,21 +729,23 @@ describe('runRetentionCleanup', () => {
       fileOps: [{ messageIdx: 0, filePath: '/workspace/recent.ts', operation: 'read' }],
     });
 
-    runRetentionCleanup();
+    await runRetentionCleanup();
 
     const db = getDb();
 
-    // Old run gone entirely.
-    const oldRun = db.select({ id: runs.id }).from(runs).where({ name: 'retention-old-run' }).get();
-    expect(oldRun).toBeUndefined();
+    // Old run gone entirely. Postgres has no implicit `{ column: value }`
+    // shorthand — the comparison has to be an explicit eq() predicate.
+    const oldRun = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(eq(runs.name, 'retention-old-run'));
+    expect(oldRun).toEqual([]);
 
     // The old run's children are swept by the FK ON DELETE CASCADE: the
     // tool_calls table still holds exactly the recent session's rows.
-    const leftoverToolSessions = db
-      .select({ sessionId: toolCalls.sessionId })
-      .from(toolCalls)
-      .all()
-      .map((r) => r.sessionId);
+    const leftoverToolSessions = (
+      await db.select({ sessionId: toolCalls.sessionId }).from(toolCalls)
+    ).map((r) => r.sessionId);
     expect(leftoverToolSessions).toEqual([recentId]);
 
     // The export route is the natural consumer-facing check: the old session's
@@ -726,7 +766,7 @@ describe('runRetentionCleanup', () => {
   });
 
   it('leaves a fully recent DB untouched', async () => {
-    const api = makeClient();
+    const api = await makeClient();
     await seed(api, {
       sessionID: 'retention-only-recent',
       run: {
@@ -742,7 +782,7 @@ describe('runRetentionCleanup', () => {
       fileOps: [],
     });
 
-    runRetentionCleanup();
+    await runRetentionCleanup();
 
     const exportRes = await api.req('/api/stats/export?days=0');
     const exported = (await exportRes.json()) as Array<{ name: string }>;

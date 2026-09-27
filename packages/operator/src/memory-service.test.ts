@@ -54,10 +54,10 @@ describe('shouldReconcileMemoryService', () => {
     );
   });
 
-  it('requires a data PVC source (git or local)', () => {
+  it('enables with embedding.enabled even without a git or local source', () => {
     expect(
       shouldReconcileMemoryService(makeProject({ spec: { embedding: { enabled: true } } })),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('enables with embedding.enabled + source.local', () => {
@@ -94,10 +94,12 @@ describe('renderMemoryServiceDeployment', () => {
     const names = env.map((e) => e.name).sort();
     expect(names).toEqual(
       [
+        'DATABASE_POOL_MAX',
+        'DATABASE_URL',
         'EMBEDDING_DIMENSIONS',
         'EMBEDDING_MODEL',
         'MCP_TOKEN',
-        'MEMORY_DB_PATH',
+        'MEMORY_PROJECT',
         'MEMORY_SERVICE_PORT',
         'OLLAMA_ALLOWED_ORIGINS',
         'OLLAMA_BASE_URL',
@@ -127,20 +129,23 @@ describe('renderMemoryServiceDeployment', () => {
     );
   });
 
-  it('applies defaults for dimensions, Ollama URL and the DB path on the default mount', () => {
+  it('applies defaults for dimensions, project scope and Ollama URL', () => {
     const dep = renderMemoryServiceDeployment(
       makeProject({
         spec: { source: { local: true }, embedding: { enabled: true, model: 'nomic-embed-text' } },
       }),
     );
     expect(envOf(dep, 'EMBEDDING_DIMENSIONS').value).toBe('768');
+    expect(envOf(dep, 'MEMORY_PROJECT').value).toBe('project-uid-1');
     expect(envOf(dep, 'OLLAMA_BASE_URL').value).toBe(
       'http://ollama.percussionist.svc.cluster.local:11434',
     );
-    expect(envOf(dep, 'MEMORY_DB_PATH').value).toBe('/data/memory/vectors.db');
+    expect(envOf(dep, 'DATABASE_URL').valueFrom).toEqual({
+      secretKeyRef: { name: 'percussionist-db', key: 'url', optional: false },
+    });
   });
 
-  it('mounts the memory DB under the overridden mountPath', () => {
+  it('does not mount the project data PVC for the database', () => {
     const dep = renderMemoryServiceDeployment(
       makeProject({
         spec: {
@@ -150,8 +155,8 @@ describe('renderMemoryServiceDeployment', () => {
         },
       }),
     );
-    expect(envOf(dep, 'MEMORY_DB_PATH').value).toBe('/custom-data/memory/vectors.db');
-    expect(memoryContainer(dep).volumeMounts?.[0]?.mountPath).toBe('/custom-data');
+    expect(memoryContainer(dep).volumeMounts).toBeUndefined();
+    expect(dep.spec?.template.spec?.volumes).toBeUndefined();
   });
 
   it('references the required MCP token secret (control-plane gating)', () => {
@@ -162,24 +167,9 @@ describe('renderMemoryServiceDeployment', () => {
     });
   });
 
-  it('claims the project data PVC (honoring spec.data.pvcName)', () => {
-    const defaultDep = renderMemoryServiceDeployment(makeProject());
-    expect(defaultDep.spec?.template.spec?.volumes?.[0]?.persistentVolumeClaim?.claimName).toBe(
-      'demo-project-data',
-    );
-
-    const overridden = renderMemoryServiceDeployment(
-      makeProject({
-        spec: {
-          source: { local: true },
-          data: { pvcName: 'custom-pvc' },
-          embedding: { enabled: true, model: 'm' },
-        },
-      }),
-    );
-    expect(overridden.spec?.template.spec?.volumes?.[0]?.persistentVolumeClaim?.claimName).toBe(
-      'custom-pvc',
-    );
+  it('does not claim a project PVC', () => {
+    const dep = renderMemoryServiceDeployment(makeProject());
+    expect(dep.spec?.template.spec?.volumes).toBeUndefined();
   });
 
   it('uses IfNotPresent pull policy so locally built images work', () => {

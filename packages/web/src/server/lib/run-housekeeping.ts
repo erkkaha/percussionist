@@ -1,8 +1,8 @@
 // lib/run-housekeeping.ts — crash-proof wrapper for background housekeeping loops.
 //
 // pruneExpiredRunKeys and runRetentionCleanup run on timers and used to be
-// invoked bare: a single failure (e.g. SQLITE_BUSY from a concurrent
-// stats-POST write) rejected the promise / threw inside setInterval, landing in
+// invoked bare: a single database failure from a concurrent stats-POST write
+// rejected the promise / threw inside setInterval, landing in
 // the process-level unhandledRejection / uncaughtException handlers and exiting
 // the pod — killing every open SSE stream and attach terminal.
 //

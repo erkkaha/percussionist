@@ -3,7 +3,7 @@
 // POST /api/stats/session
 //   Called by the dispatcher sidecar after a session completes. Persists the
 //   full session — run metadata, every message (with full content), tool
-//   invocations, and file accesses — to percussionist.db.
+//   invocations, and file accesses — to the PostgreSQL stats database.
 //
 // PATCH /api/stats/session
 //   Called by the dispatcher incrementally after each assistant turn completes.
@@ -18,10 +18,49 @@
 //     days=N   — look-back window in days (default: 30; 0 = all time)
 
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { auth, scoped } from '../auth.js';
-import { fileOps, getDb, messages, metricSnapshots, runs, toolCalls } from '../db.js';
+import { type Db, fileOps, getDb, messages, metricSnapshots, runs, toolCalls } from '../db.js';
+
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+function num(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function numOrNull(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function elapsedMs(startedAt: SQLWrapper, completedAt: SQLWrapper): SQL<number> {
+  return sql<number>`EXTRACT(EPOCH FROM (${completedAt}::timestamptz - ${startedAt}::timestamptz)) * 1000`;
+}
+
+function avgElapsedMsSql(): SQL<number> {
+  return sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
+    THEN ${elapsedMs(runs.startedAt, runs.completedAt)} ELSE NULL END)::double precision`;
+}
+
+function utcDay(col: SQLWrapper): SQL<string> {
+  return sql<string>`to_char((${col})::timestamptz at time zone 'utc', 'YYYY-MM-DD')`;
+}
+
+function parseLimit(raw: string | undefined, fallback: number, max: number): number {
+  const parsed = Number.parseInt(raw ?? String(fallback), 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.min(Math.max(parsed, 1), max);
+}
+
+function parseOffset(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? '0', 10);
+  if (Number.isNaN(parsed)) return 0;
+  return Math.max(parsed, 0);
+}
 
 // ---------------------------------------------------------------------------
 // Payload types (sent by the dispatcher)
@@ -84,7 +123,7 @@ interface SessionPayload {
 
 // ---------------------------------------------------------------------------
 // Ingestion guards — a compromised run must not falsify another run's audit
-// history or exhaust SQLite/the web PVC with unbounded payloads.
+// history or exhaust the database with unbounded payloads.
 //
 // Per-run keys carry {kind:'run', runName, runUid?, project?} in metadata.
 // When the caller authenticated with such a key, the payload's run.name must
@@ -193,6 +232,28 @@ function assertExistingSessionOwnership(
   }
 }
 
+async function claimSession(
+  tx: Tx,
+  sessionID: string,
+  values: typeof runs.$inferInsert,
+  update: Partial<typeof runs.$inferInsert>,
+): Promise<string | undefined> {
+  const inserted = await tx
+    .insert(runs)
+    .values(values)
+    .onConflictDoNothing()
+    .returning({ name: runs.name });
+  if (inserted.length > 0) return undefined;
+
+  const existing = await tx
+    .select({ name: runs.name })
+    .from(runs)
+    .where(eq(runs.id, sessionID))
+    .for('update');
+  await tx.update(runs).set(update).where(eq(runs.id, sessionID));
+  return existing[0]?.name;
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 
@@ -222,18 +283,11 @@ stats.post('/session', scoped('stats', 'write'), async (c) => {
   const db = getDb();
 
   try {
-    db.transaction((tx) => {
-      // Keep ownership validation and the upsert in one SQLite transaction so
-      // concurrent first writes cannot race between the check and insert.
-      const existing = tx
-        .select({ name: runs.name })
-        .from(runs)
-        .where(eq(runs.id, sessionID))
-        .get();
-      assertExistingSessionOwnership(c, existing?.name, runPayload.name);
-      // Upsert the run row (idempotent — dispatcher may retry on network hiccup).
-      tx.insert(runs)
-        .values({
+    await db.transaction(async (tx) => {
+      const existingName = await claimSession(
+        tx,
+        sessionID,
+        {
           id: sessionID,
           name: runPayload.name,
           namespace: runPayload.namespace,
@@ -248,76 +302,68 @@ stats.post('/session', scoped('stats', 'write'), async (c) => {
           cost: runPayload.cost,
           error: runPayload.error,
           createdAt: new Date().toISOString(),
-        })
-        .onConflictDoUpdate({
-          target: runs.id,
-          set: {
-            phase: runPayload.phase,
-            completedAt: runPayload.completedAt,
-            tokensIn: runPayload.tokensIn ?? 0,
-            tokensOut: runPayload.tokensOut ?? 0,
-            cost: runPayload.cost,
-            error: runPayload.error,
-          },
-        })
-        .run();
+        },
+        {
+          phase: runPayload.phase,
+          completedAt: runPayload.completedAt,
+          tokensIn: runPayload.tokensIn ?? 0,
+          tokensOut: runPayload.tokensOut ?? 0,
+          cost: runPayload.cost,
+          error: runPayload.error,
+        },
+      );
+      assertExistingSessionOwnership(c, existingName, runPayload.name);
 
       // Messages — delete+re-insert so retries don't duplicate rows.
       if (body.messages?.length) {
-        tx.delete(messages).where(eq(messages.sessionId, sessionID)).run();
+        await tx.delete(messages).where(eq(messages.sessionId, sessionID));
         for (const m of body.messages) {
-          tx.insert(messages)
-            .values({
-              id: m.id ?? randomUUID(),
-              sessionId: sessionID,
-              idx: m.idx,
-              role: m.role,
-              content: m.content,
-              model: m.model,
-              tokensIn: m.tokensIn,
-              tokensOut: m.tokensOut,
-              tokensReasoning: m.tokensReasoning,
-              tokensCacheRead: m.tokensCacheRead,
-              tokensCacheWrite: m.tokensCacheWrite,
-              cost: m.cost,
-              createdAt: m.createdAt,
-              completedAt: m.completedAt,
-            })
-            .run();
+          await tx.insert(messages).values({
+            id: m.id ?? randomUUID(),
+            sessionId: sessionID,
+            idx: m.idx,
+            role: m.role,
+            content: m.content,
+            model: m.model,
+            tokensIn: m.tokensIn,
+            tokensOut: m.tokensOut,
+            tokensReasoning: m.tokensReasoning,
+            tokensCacheRead: m.tokensCacheRead,
+            tokensCacheWrite: m.tokensCacheWrite,
+            cost: m.cost,
+            createdAt: m.createdAt,
+            completedAt: m.completedAt,
+          });
         }
       }
 
       // Tool calls
       if (body.toolCalls?.length) {
-        tx.delete(toolCalls).where(eq(toolCalls.sessionId, sessionID)).run();
+        await tx.delete(toolCalls).where(eq(toolCalls.sessionId, sessionID));
         for (const t of body.toolCalls) {
-          tx.insert(toolCalls)
-            .values({
-              id: t.id ?? randomUUID(),
-              sessionId: sessionID,
-              messageIdx: t.messageIdx,
-              tool: t.tool,
-              args: t.args,
-              success: t.success,
-              error: t.error,
-              durationMs: t.durationMs,
-            })
-            .run();
+          await tx.insert(toolCalls).values({
+            id: t.id ?? randomUUID(),
+            sessionId: sessionID,
+            messageIdx: t.messageIdx,
+            tool: t.tool,
+            args: t.args,
+            success: t.success,
+            error: t.error,
+            durationMs: t.durationMs,
+          });
         }
       }
 
       // File ops
       if (body.fileOps?.length) {
-        tx.delete(fileOps).where(eq(fileOps.sessionId, sessionID)).run();
+        await tx.delete(fileOps).where(eq(fileOps.sessionId, sessionID));
         for (const f of body.fileOps) {
-          tx.insert(fileOps)
-            .values({
-              sessionId: sessionID,
-              messageIdx: f.messageIdx,
-              filePath: f.filePath,
-              operation: f.operation,
-            })
-            .run();
+          await tx.insert(fileOps).values({
+            sessionId: sessionID,
+            messageIdx: f.messageIdx,
+            filePath: f.filePath,
+            operation: f.operation,
+          });
         }
       }
     });
@@ -356,16 +402,11 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
   const db = getDb();
 
   try {
-    db.transaction((tx) => {
-      const existing = tx
-        .select({ name: runs.name })
-        .from(runs)
-        .where(eq(runs.id, sessionID))
-        .get();
-      assertExistingSessionOwnership(c, existing?.name, runPayload.name);
-      // Upsert run row — create if not exists, update token counts and phase if set.
-      tx.insert(runs)
-        .values({
+    await db.transaction(async (tx) => {
+      const existingName = await claimSession(
+        tx,
+        sessionID,
+        {
           id: sessionID,
           name: runPayload.name,
           namespace: runPayload.namespace,
@@ -380,26 +421,25 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
           cost: runPayload.cost,
           error: runPayload.error,
           createdAt: new Date().toISOString(),
-        })
-        .onConflictDoUpdate({
-          target: runs.id,
-          set: {
-            // Only update token counts, cost, and phase — never overwrite name/task/model.
-            tokensIn: runPayload.tokensIn ?? 0,
-            tokensOut: runPayload.tokensOut ?? 0,
-            cost: runPayload.cost,
-            ...(runPayload.phase ? { phase: runPayload.phase } : {}),
-            ...(runPayload.completedAt ? { completedAt: runPayload.completedAt } : {}),
-            ...(runPayload.error ? { error: runPayload.error } : {}),
-          },
-        })
-        .run();
+        },
+        {
+          // Only update token counts, cost, and phase — never overwrite name/task/model.
+          tokensIn: runPayload.tokensIn ?? 0,
+          tokensOut: runPayload.tokensOut ?? 0,
+          cost: runPayload.cost,
+          ...(runPayload.phase ? { phase: runPayload.phase } : {}),
+          ...(runPayload.completedAt ? { completedAt: runPayload.completedAt } : {}),
+          ...(runPayload.error ? { error: runPayload.error } : {}),
+        },
+      );
+      assertExistingSessionOwnership(c, existingName, runPayload.name);
 
       // Messages — insert-or-ignore: never overwrite rows that may have richer
       // data from a later full POST flush.
       if (body.messages?.length) {
         for (const m of body.messages) {
-          tx.insert(messages)
+          await tx
+            .insert(messages)
             .values({
               id: m.id ?? randomUUID(),
               sessionId: sessionID,
@@ -416,15 +456,15 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
               createdAt: m.createdAt,
               completedAt: m.completedAt,
             })
-            .onConflictDoNothing()
-            .run();
+            .onConflictDoNothing();
         }
       }
 
       // Tool calls — insert-or-ignore.
       if (body.toolCalls?.length) {
         for (const t of body.toolCalls) {
-          tx.insert(toolCalls)
+          await tx
+            .insert(toolCalls)
             .values({
               id: t.id ?? randomUUID(),
               sessionId: sessionID,
@@ -435,23 +475,22 @@ stats.patch('/session', scoped('stats', 'write'), async (c) => {
               error: t.error,
               durationMs: t.durationMs,
             })
-            .onConflictDoNothing()
-            .run();
+            .onConflictDoNothing();
         }
       }
 
       // File ops — insert-or-ignore (composite PK).
       if (body.fileOps?.length) {
         for (const f of body.fileOps) {
-          tx.insert(fileOps)
+          await tx
+            .insert(fileOps)
             .values({
               sessionId: sessionID,
               messageIdx: f.messageIdx,
               filePath: f.filePath,
               operation: f.operation,
             })
-            .onConflictDoNothing()
-            .run();
+            .onConflictDoNothing();
         }
       }
     });
@@ -484,12 +523,12 @@ function exportMaxSessions(): number {
   return parseInt(process.env.EXPORT_MAX_SESSIONS ?? '200', 10);
 }
 
-// Chunk size for the batched child fetches below. SQLite's default
-// bound-parameter limit is 999 (32766 on modern builds); chunking at 500
-// session ids keeps the IN clause well under the limit on any SQLite version.
+// Chunk size for the batched child fetches below. PostgreSQL allows 65535 bound
+// parameters per statement, so this only exists to keep the generated SQL small;
+// it keeps the query count proportional to the (already capped) session set.
 const EXPORT_FETCH_CHUNK = 500;
 
-stats.get('/export', auth(), (c) => {
+stats.get('/export', auth(), async (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
 
@@ -503,19 +542,17 @@ stats.get('/export', auth(), (c) => {
   // truncation. Ordering by startedAt DESC keeps the most recent sessions
   // when the window exceeds the cap.
   const rows = cutoff
-    ? db
+    ? await db
         .select()
         .from(runs)
         .where(gte(runs.startedAt, cutoff))
         .orderBy(desc(runs.startedAt))
         .limit(cap + 1)
-        .all()
-    : db
+    : await db
         .select()
         .from(runs)
         .orderBy(desc(runs.startedAt))
-        .limit(cap + 1)
-        .all();
+        .limit(cap + 1);
 
   const truncated = rows.length > cap;
   const runRows = truncated ? rows.slice(0, cap) : rows;
@@ -542,21 +579,20 @@ stats.get('/export', auth(), (c) => {
   for (let i = 0; i < sessionIds.length; i += EXPORT_FETCH_CHUNK) {
     const chunk = sessionIds.slice(i, i + EXPORT_FETCH_CHUNK);
 
-    for (const row of db.select().from(messages).where(inArray(messages.sessionId, chunk)).all()) {
+    for (const row of await db.select().from(messages).where(inArray(messages.sessionId, chunk))) {
       const list = messagesBySession.get(row.sessionId);
       if (list) list.push(row);
       else messagesBySession.set(row.sessionId, [row]);
     }
-    for (const row of db
+    for (const row of await db
       .select()
       .from(toolCalls)
-      .where(inArray(toolCalls.sessionId, chunk))
-      .all()) {
+      .where(inArray(toolCalls.sessionId, chunk))) {
       const list = toolCallsBySession.get(row.sessionId);
       if (list) list.push(row);
       else toolCallsBySession.set(row.sessionId, [row]);
     }
-    for (const row of db.select().from(fileOps).where(inArray(fileOps.sessionId, chunk)).all()) {
+    for (const row of await db.select().from(fileOps).where(inArray(fileOps.sessionId, chunk))) {
       const list = fileOpsBySession.get(row.sessionId);
       if (list) list.push(row);
       else fileOpsBySession.set(row.sessionId, [row]);
@@ -617,11 +653,11 @@ const sessionRowSelect = {
 // whole table), never materialised in JS. The response shape is fixed — the
 // clients (SessionList with PAGE_SIZE=50, StatsView with STATS_LIMIT=500) parse
 // sessions/total/summary/agentSummaries/modelRows strictly.
-stats.get('/sessions', auth(), (c) => {
+stats.get('/sessions', auth(), async (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
-  const offset = Math.max(parseInt(c.req.query('offset') ?? '0', 10), 0);
+  const limit = parseLimit(c.req.query('limit'), 50, 200);
+  const offset = parseOffset(c.req.query('offset'));
 
   const db = getDb();
 
@@ -632,14 +668,13 @@ stats.get('/sessions', auth(), (c) => {
   // runs only for the page rows, not every row in the window. The select shape
   // is shared with GET /sessions/:name via sessionRowSelect, so resolvedModel
   // has a single definition.
-  const sessions = db
+  const sessions = (await db
     .select(sessionRowSelect)
     .from(runs)
     .where(whereClause)
     .orderBy(desc(runs.startedAt))
     .limit(limit)
-    .offset(offset)
-    .all() as Array<{
+    .offset(offset)) as Array<{
     id: string;
     name: string;
     namespace: string | null;
@@ -659,44 +694,42 @@ stats.get('/sessions', auth(), (c) => {
 
   // Full-window aggregates — total + summary over the entire retention window
   // (days=0 = whole table), independent of the page.
-  const agg = db
-    .select({
-      total: sql<number>`COUNT(*)`.as('total'),
-      succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
-        'succeeded',
-      ),
-      failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
-      totalTokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('total_tokens_in'),
-      totalTokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('total_tokens_out'),
-      totalCost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('total_cost'),
-      avgDurationMs:
-        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
-        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
-          'avg_duration_ms',
+  const agg = (
+    await db
+      .select({
+        total: sql<number>`COUNT(*)`.as('total'),
+        succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
+          'succeeded',
         ),
-    })
-    .from(runs)
-    .where(whereClause)
-    .get();
+        failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
+        totalTokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('total_tokens_in'),
+        totalTokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('total_tokens_out'),
+        totalCost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('total_cost'),
+        avgDurationMs: avgElapsedMsSql().as('avg_duration_ms'),
+      })
+      .from(runs)
+      .where(whereClause)
+  )[0];
 
-  const total = agg?.total ?? 0;
-  const succeeded = agg?.succeeded ?? 0;
-  const failed = agg?.failed ?? 0;
+  const total = num(agg?.total);
+  const succeeded = num(agg?.succeeded);
+  const failed = num(agg?.failed);
+  const avgDurationMs = numOrNull(agg?.avgDurationMs);
 
   const summary = {
     total,
     succeeded,
     failed,
     successRate: total > 0 ? Math.round((succeeded / total) * 100) : null,
-    totalTokensIn: agg?.totalTokensIn ?? 0,
-    totalTokensOut: agg?.totalTokensOut ?? 0,
-    totalCost: agg?.totalCost ?? 0,
-    avgDurationMs: agg?.avgDurationMs != null ? Math.round(agg.avgDurationMs) : null,
+    totalTokensIn: num(agg?.totalTokensIn),
+    totalTokensOut: num(agg?.totalTokensOut),
+    totalCost: num(agg?.totalCost),
+    avgDurationMs: avgDurationMs != null ? Math.round(avgDurationMs) : null,
   };
 
   // Per-model breakdown — GROUP BY the resolved model, ordered by tokens in
   // (matches the previous JS sort).
-  const modelRows = db
+  const modelRows = (await db
     .select({
       model: sessionRowSelect.resolvedModel,
       runs: sql<number>`COUNT(*)`.as('runs'),
@@ -707,8 +740,7 @@ stats.get('/sessions', auth(), (c) => {
     .from(runs)
     .where(whereClause)
     .groupBy(sessionRowSelect.resolvedModel)
-    .orderBy(sql`COALESCE(SUM(${runs.tokensIn}), 0) DESC`)
-    .all() as Array<{
+    .orderBy(sql`COALESCE(SUM(${runs.tokensIn}), 0) DESC`)) as Array<{
     model: string;
     runs: number;
     tokensIn: number;
@@ -716,9 +748,17 @@ stats.get('/sessions', auth(), (c) => {
     cost: number;
   }>;
 
+  const modelBreakdown = modelRows.map((r) => ({
+    model: r.model,
+    runs: num(r.runs),
+    tokensIn: num(r.tokensIn),
+    tokensOut: num(r.tokensOut),
+    cost: num(r.cost),
+  }));
+
   // Per-agent breakdown — grouped in SQL; only the derived fields
   // (successRate/avgTokensPerRun/avgDurationMs) and the runs-desc sort are JS.
-  const agentRows = db
+  const agentRows = (await db
     .select({
       agent: sql<string>`COALESCE(${runs.agent}, 'unknown')`.as('agent'),
       runs: sql<number>`COUNT(*)`.as('runs'),
@@ -729,16 +769,11 @@ stats.get('/sessions', auth(), (c) => {
       tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
       tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
       cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('cost'),
-      avgDurationMs:
-        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
-        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
-          'avg_duration_ms',
-        ),
+      avgDurationMs: avgElapsedMsSql().as('avg_duration_ms'),
     })
     .from(runs)
     .where(whereClause)
-    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`)
-    .all() as Array<{
+    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`)) as Array<{
     agent: string;
     runs: number;
     succeeded: number;
@@ -751,15 +786,17 @@ stats.get('/sessions', auth(), (c) => {
 
   // Per-agent model lists — from runs.model only (matches the previous JS,
   // which added r.model, not the resolved model, to each agent's models[]).
-  const agentModelRows = db
+  const agentModelRows = (await db
     .select({
       agent: sql<string>`COALESCE(${runs.agent}, 'unknown')`.as('agent'),
       model: runs.model,
     })
     .from(runs)
     .where(and(whereClause, sql`${runs.model} IS NOT NULL`))
-    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`, runs.model)
-    .all() as Array<{ agent: string; model: string }>;
+    .groupBy(sql`COALESCE(${runs.agent}, 'unknown')`, runs.model)) as Array<{
+    agent: string;
+    model: string;
+  }>;
 
   const agentModels = new Map<string, string[]>();
   for (const row of agentModelRows) {
@@ -769,19 +806,26 @@ stats.get('/sessions', auth(), (c) => {
   }
 
   const agentSummaries = agentRows
-    .map((v) => ({
-      agent: v.agent,
-      runs: v.runs,
-      succeeded: v.succeeded,
-      failed: v.failed,
-      successRate: v.runs > 0 ? Math.round((v.succeeded / v.runs) * 100) : null,
-      totalTokensIn: v.tokensIn,
-      totalTokensOut: v.tokensOut,
-      totalCost: v.cost,
-      avgTokensPerRun: v.runs > 0 ? Math.round((v.tokensIn + v.tokensOut) / v.runs) : 0,
-      avgDurationMs: v.avgDurationMs != null ? Math.round(v.avgDurationMs) : null,
-      models: agentModels.get(v.agent) ?? [],
-    }))
+    .map((v) => {
+      const agentRuns = num(v.runs);
+      const agentSucceeded = num(v.succeeded);
+      const tokensIn = num(v.tokensIn);
+      const tokensOut = num(v.tokensOut);
+      const agentAvgDurationMs = numOrNull(v.avgDurationMs);
+      return {
+        agent: v.agent,
+        runs: agentRuns,
+        succeeded: agentSucceeded,
+        failed: num(v.failed),
+        successRate: agentRuns > 0 ? Math.round((agentSucceeded / agentRuns) * 100) : null,
+        totalTokensIn: tokensIn,
+        totalTokensOut: tokensOut,
+        totalCost: num(v.cost),
+        avgTokensPerRun: agentRuns > 0 ? Math.round((tokensIn + tokensOut) / agentRuns) : 0,
+        avgDurationMs: agentAvgDurationMs != null ? Math.round(agentAvgDurationMs) : null,
+        models: agentModels.get(v.agent) ?? [],
+      };
+    })
     .sort((a, b) => b.runs - a.runs);
 
   return c.json({
@@ -791,7 +835,7 @@ stats.get('/sessions', auth(), (c) => {
     offset,
     summary,
     agentSummaries,
-    modelRows,
+    modelRows: modelBreakdown,
   });
 });
 
@@ -800,10 +844,10 @@ stats.get('/sessions', auth(), (c) => {
 // The stats DB row outlives the Run CR (deleted after runTTLDays), so this is
 // the durable source of truth for the session detail page. Returns the same
 // StatSession shape as the list rows, or 404 when the run has no DB row.
-stats.get('/sessions/:name', auth(), (c) => {
+stats.get('/sessions/:name', auth(), async (c) => {
   const name = c.req.param('name');
   const db = getDb();
-  const row = db.select(sessionRowSelect).from(runs).where(eq(runs.name, name)).get();
+  const row = (await db.select(sessionRowSelect).from(runs).where(eq(runs.name, name)))[0];
   if (!row) return c.json({ error: `Session "${name}" not found` }, 404);
   return c.json(row);
 });
@@ -815,9 +859,9 @@ stats.get('/sessions/:name', auth(), (c) => {
 // `content` column, so a conversation survives the run pod and the Run CR TTL.
 // Returns SessionResponse-shaped JSON with source: 'db' so the client can feed
 // it straight into SessionView. 404 only when the run has no DB row at all.
-stats.get('/sessions/:name/messages', auth(), (c) => {
+stats.get('/sessions/:name/messages', auth(), async (c) => {
   const name = c.req.param('name');
-  const replay = replaySessionFromDb(name);
+  const replay = await replaySessionFromDb(name);
   if (!replay) return c.json({ error: `No stored session for "${name}"` }, 404);
   return c.json(replay);
 });
@@ -854,9 +898,9 @@ export interface ReplayedSession {
 }
 
 /** Look up a run row's session ID by run name (survives Run CR TTL deletion). */
-export function lookupSessionIdByRunName(name: string): string | null {
+export async function lookupSessionIdByRunName(name: string): Promise<string | null> {
   const db = getDb();
-  const row = db.select({ id: runs.id }).from(runs).where(eq(runs.name, name)).get();
+  const row = (await db.select({ id: runs.id }).from(runs).where(eq(runs.name, name)))[0];
   return row?.id ?? null;
 }
 
@@ -866,17 +910,16 @@ export function lookupSessionIdByRunName(name: string): string | null {
  * the row exists but no messages were ever flushed (e.g. a run that died
  * before its first turn completed).
  */
-export function replaySessionFromDb(name: string): ReplayedSession | null {
-  const sessionID = lookupSessionIdByRunName(name);
+export async function replaySessionFromDb(name: string): Promise<ReplayedSession | null> {
+  const sessionID = await lookupSessionIdByRunName(name);
   if (!sessionID) return null;
 
   const db = getDb();
-  const rows = db
+  const rows = await db
     .select()
     .from(messages)
     .where(eq(messages.sessionId, sessionID))
-    .orderBy(asc(messages.idx))
-    .all();
+    .orderBy(asc(messages.idx));
 
   return {
     sessionID,
@@ -944,26 +987,28 @@ function reconstructDbMessage(
 
 export const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS ?? '30', 10);
 
-export function runRetentionCleanup(): void {
+export async function runRetentionCleanup(): Promise<void> {
   if (RETENTION_DAYS <= 0) return; // 0 = keep forever
   const db = getDb();
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // Count the run rows to delete first: SQLite's `changes()` after the DELETE
-  // includes FK-cascaded child rows (messages / tool_calls / file_ops), so it
-  // overstates how many runs were removed.
-  const count =
-    db
-      .select({ count: sql<number>`COUNT(*)`.as('count') })
-      .from(runs)
-      .where(lt(runs.startedAt, cutoff))
-      .get()?.count ?? 0;
+  // Count the run rows to delete first: the child rows (messages / tool_calls /
+  // file_ops) are removed by FK ON DELETE CASCADE, so counting the DELETE's
+  // affected rows would overstate how many runs were removed.
+  const count = num(
+    (
+      await db
+        .select({ count: sql<number>`COUNT(*)`.as('count') })
+        .from(runs)
+        .where(lt(runs.startedAt, cutoff))
+    )[0]?.count,
+  );
 
   if (count <= 0) return;
 
   // Cascade deletes handle messages / tool_calls / file_ops via FK ON DELETE
   // CASCADE. Deleting from runs is sufficient.
-  db.delete(runs).where(lt(runs.startedAt, cutoff)).run();
+  await db.delete(runs).where(lt(runs.startedAt, cutoff));
 
   console.log(
     `[stats] retention cleanup: deleted ${count} run(s) older than ${RETENTION_DAYS} days`,
@@ -972,7 +1017,7 @@ export function runRetentionCleanup(): void {
 
 // GET /api/stats/tool-metrics?days=30&agent=X — aggregated tool usage stats.
 // Sources data from tool_calls (message-part extraction) instead of tool_events (SSE/MCP events).
-stats.get('/tool-metrics', auth(), (c) => {
+stats.get('/tool-metrics', auth(), async (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
   const agent = c.req.query('agent');
@@ -986,17 +1031,19 @@ stats.get('/tool-metrics', auth(), (c) => {
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   // 1. Tool metrics grouped by tool name.
-  const rows = db
+  const rawRows = (await db
     .select({
       toolName: toolCalls.tool,
       calls: sql<number>`COUNT(*)`.as('calls'),
-      avgDurationMs: sql<number>`AVG(${toolCalls.durationMs})`.as('avg_duration_ms'),
+      avgDurationMs: sql<number>`AVG(${toolCalls.durationMs})::double precision`.as(
+        'avg_duration_ms',
+      ),
       successRate:
-        sql<number>`CAST(SUM(CASE WHEN ${toolCalls.success} = 1 THEN 1 ELSE 0 END) AS REAL) / CAST(COUNT(*) AS REAL)`.as(
+        sql<number>`CAST(SUM(CASE WHEN ${toolCalls.success} IS TRUE THEN 1 ELSE 0 END) AS double precision) / CAST(COUNT(*) AS double precision)`.as(
           'success_rate',
         ),
       avgResultSize: sql<null>`NULL`.as('avg_result_size'),
-      totalErrors: sql<number>`SUM(CASE WHEN ${toolCalls.success} = 0 THEN 1 ELSE 0 END)`.as(
+      totalErrors: sql<number>`SUM(CASE WHEN ${toolCalls.success} IS FALSE THEN 1 ELSE 0 END)`.as(
         'total_errors',
       ),
       sessionsUsing: sql<number>`COUNT(DISTINCT ${toolCalls.sessionId})`.as('sessions_using'),
@@ -1005,8 +1052,7 @@ stats.get('/tool-metrics', auth(), (c) => {
     .innerJoin(runs, eq(toolCalls.sessionId, runs.id))
     .where(whereClause)
     .groupBy(toolCalls.tool)
-    .orderBy(desc(sql`COUNT(*)`))
-    .all() as Array<{
+    .orderBy(desc(sql`COUNT(*)`))) as Array<{
     toolName: string;
     calls: number;
     avgDurationMs: number | null;
@@ -1016,15 +1062,24 @@ stats.get('/tool-metrics', auth(), (c) => {
     sessionsUsing: number;
   }>;
 
+  const rows = rawRows.map((r) => ({
+    ...r,
+    calls: num(r.calls),
+    avgDurationMs: numOrNull(r.avgDurationMs),
+    successRate: numOrNull(r.successRate),
+    totalErrors: num(r.totalErrors),
+    sessionsUsing: num(r.sessionsUsing),
+  }));
+
   // 2. Token attribution: distribute message-level tokensOut across tool calls.
   // For each tool call, find its assistant message's tokensOut and how many
   // tool calls share that message, then attribute tokensOut / count.
-  const tokenData = db
+  const tokenData = (await db
     .select({
       tool: toolCalls.tool,
       tokensOut: messages.tokensOut,
       msgToolCount: sql<number>`(
-        SELECT CAST(COUNT(*) AS REAL) FROM tool_calls tc2
+        SELECT CAST(COUNT(*) AS double precision) FROM tool_calls tc2
         WHERE tc2.session_id = ${toolCalls.sessionId}
           AND tc2.message_idx = ${toolCalls.messageIdx}
       )`.as('msg_tool_count'),
@@ -1039,8 +1094,7 @@ stats.get('/tool-metrics', auth(), (c) => {
         eq(messages.role, 'assistant'),
       ),
     )
-    .where(whereClause)
-    .all() as Array<{
+    .where(whereClause)) as Array<{
     tool: string;
     tokensOut: number | null;
     msgToolCount: number;
@@ -1048,8 +1102,10 @@ stats.get('/tool-metrics', auth(), (c) => {
 
   const tokenMap = new Map<string, { total: number; count: number }>();
   for (const d of tokenData) {
-    if (d.tokensOut != null && d.msgToolCount > 0) {
-      const cost = d.tokensOut / d.msgToolCount;
+    const messageTokensOut = numOrNull(d.tokensOut);
+    const sharedCalls = num(d.msgToolCount);
+    if (messageTokensOut != null && sharedCalls > 0) {
+      const cost = messageTokensOut / sharedCalls;
       const entry = tokenMap.get(d.tool) ?? { total: 0, count: 0 };
       entry.total += cost;
       entry.count++;
@@ -1069,7 +1125,7 @@ stats.get('/tool-metrics', auth(), (c) => {
   if (cutoff) agentConditions.push(gte(runs.createdAt, cutoff));
   const agentWhereClause = agentConditions.length > 0 ? and(...agentConditions) : undefined;
 
-  const agentSummary = db
+  const rawAgentSummary = (await db
     .select({
       agent: runs.agent,
       calls: sql<number>`COUNT(*)`.as('calls'),
@@ -1088,28 +1144,34 @@ stats.get('/tool-metrics', auth(), (c) => {
     )
     .where(and(agentWhereClause, sql`${runs.agent} IS NOT NULL`))
     .groupBy(runs.agent)
-    .orderBy(desc(sql`COUNT(*)`))
-    .all() as Array<{
+    .orderBy(desc(sql`COUNT(*)`))) as Array<{
     agent: string;
     calls: number;
     totalTokensOut: number;
     totalSessions: number;
   }>;
 
+  const agentSummary = rawAgentSummary.map((r) => ({
+    agent: r.agent,
+    calls: num(r.calls),
+    totalTokensOut: num(r.totalTokensOut),
+    totalSessions: num(r.totalSessions),
+  }));
+
   const totalCalls = rows.reduce((s, r) => s + r.calls, 0);
 
   const sessionCountQuery = db
-    .select({ count: sql<number>`COUNT(DISTINCT ${toolCalls.sessionId})` })
+    .select({ count: sql<number>`COUNT(DISTINCT ${toolCalls.sessionId})`.as('count') })
     .from(toolCalls)
     .innerJoin(runs, eq(toolCalls.sessionId, runs.id));
-  const totalSessions = whereClause
-    ? sessionCountQuery.where(whereClause).get()
-    : sessionCountQuery.get();
+  const totalSessionsRow = whereClause
+    ? (await sessionCountQuery.where(whereClause))[0]
+    : (await sessionCountQuery)[0];
 
   return c.json({
     tools: rows,
     totalCalls,
-    totalSessions: totalSessions?.count ?? 0,
+    totalSessions: num(totalSessionsRow?.count),
     agentSummary,
     period: {
       days,
@@ -1135,17 +1197,16 @@ stats.get('/metrics-timeseries', auth(), async (c) => {
     nodeFilter !== 'all' ? eq(metricSnapshots.node, nodeFilter) : undefined,
   );
 
-  const rows = db
+  const rows = await db
     .select({
       recordedAt: metricSnapshots.recordedAt,
       node: metricSnapshots.node,
-      cpuPct: sql<number>`ROUND(CAST(${metricSnapshots.cpuUsageMillicores} AS REAL) / NULLIF(${metricSnapshots.cpuCapacityMillicores}, 0) * 100, 1)`,
-      memPct: sql<number>`ROUND(CAST(${metricSnapshots.memoryUsageBytes} AS REAL) / NULLIF(${metricSnapshots.memoryCapacityBytes}, 0) * 100, 1)`,
+      cpuPct: sql<number>`ROUND((CAST(${metricSnapshots.cpuUsageMillicores} AS double precision) / NULLIF(CAST(${metricSnapshots.cpuCapacityMillicores} AS double precision), 0))::numeric * 100, 1)::double precision`,
+      memPct: sql<number>`ROUND((CAST(${metricSnapshots.memoryUsageBytes} AS double precision) / NULLIF(CAST(${metricSnapshots.memoryCapacityBytes} AS double precision), 0))::numeric * 100, 1)::double precision`,
     })
     .from(metricSnapshots)
     .where(where)
-    .orderBy(asc(metricSnapshots.recordedAt))
-    .all();
+    .orderBy(asc(metricSnapshots.recordedAt));
 
   // Bucket by minute: average per node per minute.
   const buckets = new Map<string, { cpuSum: number; memSum: number; count: number }>();
@@ -1153,8 +1214,8 @@ stats.get('/metrics-timeseries', auth(), async (c) => {
     const minute = r.recordedAt.slice(0, 16); // "2024-01-01T12:00"
     const key = `${r.node}|${minute}`;
     const b = buckets.get(key) ?? { cpuSum: 0, memSum: 0, count: 0 };
-    b.cpuSum += r.cpuPct;
-    b.memSum += r.memPct;
+    b.cpuSum += num(r.cpuPct);
+    b.memSum += num(r.memPct);
     b.count += 1;
     buckets.set(key, b);
   }
@@ -1200,18 +1261,19 @@ stats.get('/metrics-timeseries', auth(), async (c) => {
   dataPoints.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
 
   // Fetch run windows within the same time window.
-  const runWindows = db
-    .select({
-      name: runs.name,
-      agent: runs.agent,
-      task: runs.task,
-      startedAt: runs.startedAt,
-      completedAt: runs.completedAt,
-    })
-    .from(runs)
-    .where(and(gte(runs.startedAt, cutoff)))
-    .orderBy(asc(runs.startedAt))
-    .all()
+  const runWindows = (
+    await db
+      .select({
+        name: runs.name,
+        agent: runs.agent,
+        task: runs.task,
+        startedAt: runs.startedAt,
+        completedAt: runs.completedAt,
+      })
+      .from(runs)
+      .where(and(gte(runs.startedAt, cutoff)))
+      .orderBy(asc(runs.startedAt))
+  )
     .filter((r) => r.startedAt && r.completedAt)
     .map((r) => ({
       name: r.name,
@@ -1245,7 +1307,7 @@ interface ModelTrendPoint {
   [key: string]: string | number;
 }
 
-stats.get('/trends', auth(), (c) => {
+stats.get('/trends', auth(), async (c) => {
   const daysParam = c.req.query('days') ?? '30';
   const days = parseInt(daysParam, 10);
 
@@ -1254,29 +1316,26 @@ stats.get('/trends', auth(), (c) => {
 
   const whereClause = cutoff ? gte(runs.startedAt, cutoff) : undefined;
 
+  const day = utcDay(runs.startedAt);
+
   // Daily run aggregates
-  const dailyRows = db
+  const rawDailyRows = (await db
     .select({
-      date: sql<string>`DATE(${runs.startedAt})`.as('date'),
+      date: day.as('date'),
       runs: sql<number>`COUNT(*)`.as('runs'),
       succeeded: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Succeeded' THEN 1 ELSE 0 END)`.as(
         'succeeded',
       ),
       failed: sql<number>`SUM(CASE WHEN ${runs.phase} = 'Failed' THEN 1 ELSE 0 END)`.as('failed'),
-      avgDurationMs:
-        sql<number>`AVG(CASE WHEN ${runs.startedAt} IS NOT NULL AND ${runs.completedAt} IS NOT NULL
-        THEN (julianday(${runs.completedAt}) - julianday(${runs.startedAt})) * 86400000 ELSE NULL END)`.as(
-          'avg_duration_ms',
-        ),
+      avgDurationMs: avgElapsedMsSql().as('avg_duration_ms'),
       tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
       tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
       cost: sql<number>`COALESCE(SUM(${runs.cost}), 0)`.as('cost'),
     })
     .from(runs)
     .where(whereClause)
-    .groupBy(sql`DATE(${runs.startedAt})`)
-    .orderBy(asc(sql`DATE(${runs.startedAt})`))
-    .all() as Array<{
+    .groupBy(day)
+    .orderBy(asc(day))) as Array<{
     date: string;
     runs: number;
     succeeded: number;
@@ -1287,36 +1346,49 @@ stats.get('/trends', auth(), (c) => {
     cost: number;
   }>;
 
-  const trendPoints: TrendPoint[] = dailyRows.map((r) => ({
-    date: r.date,
-    runs: r.runs,
-    succeeded: r.succeeded,
-    failed: r.failed,
-    successRate: r.runs > 0 ? Math.round((r.succeeded / r.runs) * 100) : 0,
-    avgDurationMs: r.avgDurationMs != null ? Math.round(r.avgDurationMs) : null,
-    tokensIn: r.tokensIn,
-    tokensOut: r.tokensOut,
-    cost: r.cost,
-  }));
+  const dailyRows = rawDailyRows.map((r) => {
+    const rowRuns = num(r.runs);
+    const rowSucceeded = num(r.succeeded);
+    const avgDuration = numOrNull(r.avgDurationMs);
+    return {
+      date: r.date,
+      runs: rowRuns,
+      succeeded: rowSucceeded,
+      failed: num(r.failed),
+      successRate: rowRuns > 0 ? Math.round((rowSucceeded / rowRuns) * 100) : 0,
+      avgDurationMs: avgDuration != null ? Math.round(avgDuration) : null,
+      tokensIn: num(r.tokensIn),
+      tokensOut: num(r.tokensOut),
+      cost: num(r.cost),
+    };
+  });
+
+  const trendPoints: TrendPoint[] = dailyRows;
 
   // Tokens per model per day
-  const modelRows = db
+  const rawModelRows = (await db
     .select({
-      date: sql<string>`DATE(${runs.startedAt})`.as('date'),
+      date: day.as('date'),
       model: runs.model,
       tokensIn: sql<number>`COALESCE(SUM(${runs.tokensIn}), 0)`.as('tokens_in'),
       tokensOut: sql<number>`COALESCE(SUM(${runs.tokensOut}), 0)`.as('tokens_out'),
     })
     .from(runs)
     .where(and(whereClause, sql`${runs.model} IS NOT NULL`))
-    .groupBy(sql`DATE(${runs.startedAt})`, runs.model)
-    .orderBy(asc(sql`DATE(${runs.startedAt})`))
-    .all() as Array<{
+    .groupBy(day, runs.model)
+    .orderBy(asc(day))) as Array<{
     date: string;
     model: string | null;
     tokensIn: number;
     tokensOut: number;
   }>;
+
+  const modelRows = rawModelRows.map((r) => ({
+    date: r.date,
+    model: r.model,
+    tokensIn: num(r.tokensIn),
+    tokensOut: num(r.tokensOut),
+  }));
 
   // Pivot into per-date, per-model total tokens (in + out)
   const pivotMap = new Map<string, Map<string, number>>();

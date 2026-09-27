@@ -3,8 +3,8 @@
 // The VAPID keypair identifies this deployment to browser push services. It is
 // generated on first use and persisted in the stats DB rather than a Kubernetes
 // Secret, deliberately: subscriptions are only valid for the keypair they were
-// created under, and both live in the same SQLite file, so they can never drift
-// apart — a wiped data dir invalidates keys and subscriptions together.
+// created under, and both live in the same database, so they can never drift
+// apart — dropping the database invalidates keys and subscriptions together.
 //
 // Payloads are end-to-end encrypted by the web-push protocol (RFC 8291) with
 // the per-subscription client keys; the push services (Google/Mozilla/Apple)
@@ -48,7 +48,7 @@ export function _setWebPushForTests(impl: WebPushLike | null): void {
   _webpush = impl ?? webpush;
 }
 
-/** Drops the cached keypair so a fresh DATA_DIR is picked up. */
+/** Drops the cached keypair so a fresh database is picked up. */
 export function _resetVapidCacheForTests(): void {
   _vapid = null;
 }
@@ -59,11 +59,11 @@ export function _resetVapidCacheForTests(): void {
 let _vapid: { publicKey: string; privateKey: string } | null = null;
 
 /** Return the deployment's VAPID keypair, generating and persisting on first use. */
-export function getVapidKeys(): { publicKey: string; privateKey: string } {
+export async function getVapidKeys(): Promise<{ publicKey: string; privateKey: string }> {
   if (_vapid) return _vapid;
 
   const db = getDb();
-  const existing = db.select().from(pushVapid).where(eq(pushVapid.id, 1)).all()[0];
+  const existing = (await db.select().from(pushVapid).where(eq(pushVapid.id, 1)))[0];
   if (existing) {
     _vapid = { publicKey: existing.publicKey, privateKey: existing.privateKey };
     return _vapid;
@@ -72,12 +72,12 @@ export function getVapidKeys(): { publicKey: string; privateKey: string } {
   const generated = _webpush.generateVAPIDKeys();
   // A concurrent first-request race loses to the unique id; re-read on conflict.
   try {
-    db.insert(pushVapid)
-      .values({ id: 1, publicKey: generated.publicKey, privateKey: generated.privateKey })
-      .run();
+    await db
+      .insert(pushVapid)
+      .values({ id: 1, publicKey: generated.publicKey, privateKey: generated.privateKey });
     console.log('[push] generated new VAPID keypair');
   } catch {
-    const row = db.select().from(pushVapid).where(eq(pushVapid.id, 1)).all()[0];
+    const row = (await db.select().from(pushVapid).where(eq(pushVapid.id, 1)))[0];
     if (!row) throw new Error('VAPID keypair insert failed and no existing row found');
     _vapid = { publicKey: row.publicKey, privateKey: row.privateKey };
     return _vapid;
@@ -101,12 +101,12 @@ function vapidSubject(): string {
 // Subscription storage
 
 /** Upsert a subscription for a user. Re-subscribing an endpoint re-binds it. */
-export function saveSubscription(
+export async function saveSubscription(
   userId: string,
   sub: PushSubscriptionKeys,
   userAgent?: string,
-): void {
-  getDb()
+): Promise<void> {
+  await getDb()
     .insert(pushSubscription)
     .values({
       userId,
@@ -120,23 +120,21 @@ export function saveSubscription(
     .onConflictDoUpdate({
       target: pushSubscription.endpoint,
       set: { userId, p256dh: sub.p256dh, auth: sub.auth, userAgent: userAgent ?? null },
-    })
-    .run();
+    });
 }
 
 /** Delete one of the user's subscriptions. Returns true if a row was removed. */
-export function deleteSubscription(userId: string, endpoint: string): boolean {
-  const removed = getDb()
+export async function deleteSubscription(userId: string, endpoint: string): Promise<boolean> {
+  const removed = await getDb()
     .delete(pushSubscription)
     .where(and(eq(pushSubscription.userId, userId), eq(pushSubscription.endpoint, endpoint)))
-    .returning({ id: pushSubscription.id })
-    .all();
+    .returning({ id: pushSubscription.id });
   return removed.length > 0;
 }
 
-export function listSubscriptions(
+export async function listSubscriptions(
   userId: string,
-): Array<{ endpoint: string; userAgent: string | null; createdAt: string }> {
+): Promise<Array<{ endpoint: string; userAgent: string | null; createdAt: string }>> {
   return getDb()
     .select({
       endpoint: pushSubscription.endpoint,
@@ -144,8 +142,7 @@ export function listSubscriptions(
       createdAt: pushSubscription.createdAt,
     })
     .from(pushSubscription)
-    .where(eq(pushSubscription.userId, userId))
-    .all();
+    .where(eq(pushSubscription.userId, userId));
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +152,7 @@ async function sendToSubscription(
   row: { endpoint: string; p256dh: string; auth: string },
   payload: PushPayload,
 ): Promise<'sent' | 'gone' | 'failed'> {
-  const keys = getVapidKeys();
+  const keys = await getVapidKeys();
   try {
     await _webpush.sendNotification(
       { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
@@ -190,7 +187,7 @@ async function dispatch(
     rows.map(async (row) => {
       const outcome = await sendToSubscription(row, payload);
       if (outcome === 'gone') {
-        db.delete(pushSubscription).where(eq(pushSubscription.endpoint, row.endpoint)).run();
+        await db.delete(pushSubscription).where(eq(pushSubscription.endpoint, row.endpoint));
       }
       return outcome;
     }),
@@ -209,11 +206,10 @@ export async function sendPushToUser(
   userId: string,
   payload: PushPayload,
 ): Promise<{ sent: number; failed: number; pruned: number }> {
-  const rows = getDb()
+  const rows = await getDb()
     .select()
     .from(pushSubscription)
-    .where(eq(pushSubscription.userId, userId))
-    .all();
+    .where(eq(pushSubscription.userId, userId));
   return dispatch(rows, payload);
 }
 
@@ -225,5 +221,5 @@ export async function sendPushToUser(
 export async function sendPushToAll(
   payload: PushPayload,
 ): Promise<{ sent: number; failed: number; pruned: number }> {
-  return dispatch(getDb().select().from(pushSubscription).all(), payload);
+  return dispatch(await getDb().select().from(pushSubscription), payload);
 }

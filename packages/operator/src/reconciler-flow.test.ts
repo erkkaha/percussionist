@@ -1110,9 +1110,8 @@ describe('safeReconcileProject()', () => {
 
       await reconciler.safeReconcileProject(project);
 
-      // code-server Deployment + Service, then memory Deployment + Service,
-      // each preceded by its own PVC probe/creation (the PVC preamble runs
-      // once per enabled component).
+      // code-server Deployment + Service, then memory Deployment + Service;
+      // the memory service uses PostgreSQL and does not probe a project PVC.
       expect(fake.calls.map((c) => c.method)).toEqual([
         'readNamespacedPersistentVolumeClaim', // code-server PVC probe (404)
         'createNamespacedPersistentVolumeClaim', // code-server PVC
@@ -1120,8 +1119,6 @@ describe('safeReconcileProject()', () => {
         'createNamespacedDeployment', // code-server deployment
         'readNamespacedService', // code-server service (404)
         'createNamespacedService', // code-server service
-        'readNamespacedPersistentVolumeClaim', // memory PVC probe (404)
-        'createNamespacedPersistentVolumeClaim', // memory PVC
         'readNamespacedDeployment', // memory deployment (404)
         'createNamespacedDeployment', // memory deployment
         'readNamespacedService', // memory service (404)
@@ -1167,7 +1164,6 @@ describe('safeReconcileProject()', () => {
         'patchNamespacedDeployment', // code-server deployment SSA
         'readNamespacedService', // code-server service exists
         'patchNamespacedService', // code-server service SSA
-        'readNamespacedPersistentVolumeClaim', // memory PVC exists
         'readNamespacedDeployment', // memory deployment exists
         'patchNamespacedDeployment', // memory deployment SSA
         'readNamespacedService', // memory service exists

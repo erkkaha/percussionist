@@ -1,9 +1,8 @@
 // memory-service.ts — Renders Deployment and Service for per-project memory services.
 //
 // The memory service provides vector embeddings + semantic search for agent
-// context and memory queries. It runs as a per-project Bun server that mounts
-// the project's data PVC and stores vectors in a local SQLite database backed
-// by sqlite-vec.
+// context and memory queries. It runs as a per-project Bun server backed by
+// PostgreSQL with pgvector; every query is scoped by MEMORY_PROJECT.
 //
 // Lifecycle: Tied to Project CR via spec.embedding.enabled. Created and
 // destroyed by the operator's project reconciler (same pattern as code-server).
@@ -17,7 +16,12 @@ import {
   MEMORY_SERVICE_PORT,
   type Project,
 } from '@percussionist/api';
-import { MEMORY_SERVICE_IMAGE, OLLAMA_ALLOWED_ORIGINS, OLLAMA_BASE_URL } from './config.js';
+import {
+  MEMORY_DATABASE_SECRET,
+  MEMORY_SERVICE_IMAGE,
+  OLLAMA_ALLOWED_ORIGINS,
+  OLLAMA_BASE_URL,
+} from './config.js';
 
 // ---------------------------------------------------------------------------
 // Naming helpers
@@ -34,10 +38,7 @@ export function memoryServiceServiceName(project: Project): string {
 // Condition check
 
 export function shouldReconcileMemoryService(project: Project): boolean {
-  const spec = project.spec;
-  if (!spec.embedding?.enabled) return false;
-  // Requires source.git or source.local for a data PVC to mount
-  return !!(spec.source?.git || spec.source?.local);
+  return project.spec.embedding?.enabled === true;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,13 +48,24 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
   const name = project.metadata.name ?? '';
   const ns = project.metadata.namespace ?? '';
   const uid = project.metadata.uid ?? '';
+  // Memories are scoped by the Project's Kubernetes UID, never by its name: a
+  // deleted project leaves rows behind (they are UID-scoped, so nothing new can
+  // read them), and recreating a project with the same name gets a fresh UID and
+  // therefore a fresh, empty scope. Falling back to the name here would hand the
+  // new project the deleted one's memories, so a missing UID is a hard error
+  // rather than a default. The API server always sets it.
+  if (!uid) {
+    throw new Error(
+      `Project ${ns}/${name} has no metadata.uid; cannot scope its memory service. ` +
+        'This means the object did not come from the API server.',
+    );
+  }
+  const projectScope = uid;
   const spec = project.spec;
   const embedding = spec.embedding;
   if (!embedding) throw new Error('embedding config is required');
 
   const image = MEMORY_SERVICE_IMAGE;
-  const pvcName = spec.data?.pvcName ?? `${name}-data`;
-  const mountPath = spec.data?.mountPath ?? '/data';
 
   const resources = embedding.resources ?? {
     requests: { cpu: '100m', memory: '256Mi' },
@@ -62,7 +74,12 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
 
   const env = [
     { name: 'MEMORY_SERVICE_PORT', value: String(MEMORY_SERVICE_PORT) },
-    { name: 'MEMORY_DB_PATH', value: `${mountPath}/memory/vectors.db` },
+    { name: 'MEMORY_PROJECT', value: projectScope },
+    { name: 'DATABASE_POOL_MAX', value: '2' },
+    {
+      name: 'DATABASE_URL',
+      valueFrom: { secretKeyRef: { name: MEMORY_DATABASE_SECRET, key: 'url', optional: false } },
+    },
     { name: 'OLLAMA_BASE_URL', value: embedding.ollamaUrl ?? OLLAMA_BASE_URL },
     { name: 'OLLAMA_ALLOWED_ORIGINS', value: OLLAMA_ALLOWED_ORIGINS },
     { name: 'EMBEDDING_MODEL', value: embedding.model },
@@ -132,12 +149,6 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
                 },
               ],
               resources,
-              volumeMounts: [
-                {
-                  name: 'data',
-                  mountPath,
-                },
-              ],
               readinessProbe: {
                 httpGet: {
                   path: '/health',
@@ -148,14 +159,6 @@ export function renderMemoryServiceDeployment(project: Project): V1Deployment {
                 initialDelaySeconds: 10,
                 periodSeconds: 5,
                 failureThreshold: 12,
-              },
-            },
-          ],
-          volumes: [
-            {
-              name: 'data',
-              persistentVolumeClaim: {
-                claimName: pvcName,
               },
             },
           ],

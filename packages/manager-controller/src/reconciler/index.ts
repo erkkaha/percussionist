@@ -117,7 +117,7 @@ export async function reconcileProject(project: Project, namespace: string): Pro
         continue;
       }
 
-      // Persist audit events to K8s Events and SQLite (via web service).
+      // Persist audit events to K8s Events and the web service database.
       const taskUid = task.metadata.uid ?? '';
       for (const event of decision.events) {
         await persistEvent(event, namespace, task.metadata.name, taskUid);

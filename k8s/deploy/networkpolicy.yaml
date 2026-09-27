@@ -80,3 +80,43 @@ spec:
       ports:
         - protocol: TCP
           port: 4100
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+  namespace: percussionist
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: postgres
+spec:
+  # Target the bundled PostgreSQL pod. The database holds every user's web stats,
+  # auth sessions and vector memories, so it gets the same treatment as the MCP
+  # surface: an allowlist of the components that legitimately hold a connection
+  # string. Runner pods (percussionist.dev/component: runner) are not selected,
+  # so an agent cannot query the database directly.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: percussionist
+      app.kubernetes.io/component: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # The dashboard (runs, messages, sessions, auth, stats).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: percussionist
+              app.kubernetes.io/component: web
+        # Per-project memory services (one pod per project with embedding on).
+        - podSelector:
+            matchLabels:
+              percussionist.dev/component: memory-service
+        # Deliberately absent: the manager controller. It has no database
+        # dependency and no DATABASE_URL — it reaches vector memory over HTTP
+        # (:4100) and everything else through the Kubernetes API. Adding it here
+        # would be a misleading allowance that invites "why is the manager
+        # allowed to reach the database?" in a future review.
+      ports:
+        - protocol: TCP
+          port: 5432

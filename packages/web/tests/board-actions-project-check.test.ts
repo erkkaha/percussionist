@@ -8,23 +8,23 @@
 // event under the URL project, corrupting the activity feed. (The abandon
 // route shared the flaw until it was deleted as dead product surface.)
 //
-// These tests pin the getProjectTask() helper behaviour: tasks resolve via the
+// Tests pin the getProjectTask() helper behaviour: tasks resolve via the
 // project's namespace, projectRef mismatch returns 404 with no annotation patch
 // and no task_events row, and the default-namespace happy path still works.
+//
+// One in-memory PGlite backs the file; every assertion below counts task_events
+// rows for a task name unique to its own test, so no test sees another's rows.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Project, Task } from '@percussionist/api';
 import { eq } from 'drizzle-orm';
 import type { Hono } from 'hono';
 import { getDb, taskEvents } from '../src/server/db.js';
 import * as kube from '../src/server/kube.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 const PROJECT_NAME = 'test-proj';
-const TEST_DATA_DIR = join('/tmp', `percussionist-board-actions-${process.pid}`);
 
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.AUTH_DISABLED = '1';
 
 function makeProject(namespace?: string): Project {
@@ -66,13 +66,9 @@ async function postAction(action: string, taskName: string, body?: unknown) {
   });
 }
 
-function eventRows(project: string, taskName: string): number {
-  return getDb()
-    .select()
-    .from(taskEvents)
-    .where(eq(taskEvents.project, project))
-    .all()
-    .filter((r) => r.taskName === taskName).length;
+async function eventRows(project: string, taskName: string): Promise<number> {
+  const rows = await getDb().select().from(taskEvents).where(eq(taskEvents.project, project));
+  return rows.filter((r) => r.taskName === taskName).length;
 }
 
 let app: Hono;
@@ -82,7 +78,7 @@ let patchTaskSpy: ReturnType<typeof spyOn>;
 let patchTaskStatusSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
+  await createTestDb();
   getProjectSpy = spyOn(kube, 'getProject').mockResolvedValue(makeProject());
   getTaskSpy = spyOn(kube, 'getTask').mockResolvedValue(makeTask({ name: 'x' }) as never);
   patchTaskSpy = spyOn(kube, 'patchTask').mockResolvedValue(makeTask({ name: 'x' }) as never);
@@ -93,13 +89,12 @@ beforeAll(async () => {
   app = createApp();
 });
 
-afterAll(() => {
+afterAll(async () => {
   getProjectSpy.mockRestore();
   getTaskSpy.mockRestore();
   patchTaskSpy.mockRestore();
   patchTaskStatusSpy.mockRestore();
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
+  await closeTestDb();
   delete process.env.AUTH_DISABLED;
 });
 
@@ -128,7 +123,7 @@ describe('board task actions resolve via the project namespace', () => {
     const annotations = (patchArgs?.[1] as { metadata: { annotations: Record<string, string> } })
       .metadata.annotations;
     expect(annotations['percussionist.dev/action-approved']).toBe('true');
-    expect(eventRows(PROJECT_NAME, 'task-a')).toBe(1);
+    expect(await eventRows(PROJECT_NAME, 'task-a')).toBe(1);
   });
 
   it('retry-review patches status of a task in a non-default namespace via patchTaskStatus', async () => {
@@ -150,7 +145,7 @@ describe('board task actions resolve via the project namespace', () => {
     const statusArgs = patchTaskStatusSpy.mock.calls[0];
     expect(statusArgs?.[0]).toBe('task-rr');
     expect(statusArgs?.[2]).toBe('other-ns');
-    expect(eventRows(PROJECT_NAME, 'task-rr')).toBe(1);
+    expect(await eventRows(PROJECT_NAME, 'task-rr')).toBe(1);
   });
 
   it('approve still works for a default-namespace task', async () => {
@@ -162,7 +157,7 @@ describe('board task actions resolve via the project namespace', () => {
     expect(getTaskSpy).toHaveBeenCalledWith('task-c', 'percussionist');
     const patchArgs = patchTaskSpy.mock.calls[0];
     expect(patchArgs?.[2]).toBe('percussionist');
-    expect(eventRows(PROJECT_NAME, 'task-c')).toBe(1);
+    expect(await eventRows(PROJECT_NAME, 'task-c')).toBe(1);
   });
 });
 
@@ -195,7 +190,7 @@ describe('request-changes writes annotations for a PR-stage task', () => {
       .metadata.annotations;
     expect(annotations['percussionist.dev/action-request-changes']).toBe('true');
     expect(annotations['percussionist.dev/action-rework-feedback']).toBe('Please expand the scope');
-    expect(eventRows(PROJECT_NAME, 'task-pr')).toBe(1);
+    expect(await eventRows(PROJECT_NAME, 'task-pr')).toBe(1);
   });
 });
 
@@ -212,7 +207,7 @@ describe('projectRef mismatch returns 404 with no write', () => {
     expect(body.error).toBe('Task not found in project');
     expect(patchTaskSpy).not.toHaveBeenCalled();
     expect(patchTaskStatusSpy).not.toHaveBeenCalled();
-    expect(eventRows(PROJECT_NAME, 'task-b')).toBe(0);
+    expect(await eventRows(PROJECT_NAME, 'task-b')).toBe(0);
   });
 
   it('retry-review 404s on projectRef mismatch with no status patch', async () => {
@@ -229,7 +224,7 @@ describe('projectRef mismatch returns 404 with no write', () => {
 
     expect(res.status).toBe(404);
     expect(patchTaskStatusSpy).not.toHaveBeenCalled();
-    expect(eventRows(PROJECT_NAME, 'task-b2')).toBe(0);
+    expect(await eventRows(PROJECT_NAME, 'task-b2')).toBe(0);
   });
 
   it('answer 404s on projectRef mismatch even when the label matches the URL project', async () => {
@@ -248,6 +243,6 @@ describe('projectRef mismatch returns 404 with no write', () => {
 
     expect(res.status).toBe(404);
     expect(patchTaskSpy).not.toHaveBeenCalled();
-    expect(eventRows(PROJECT_NAME, 'task-b3')).toBe(0);
+    expect(await eventRows(PROJECT_NAME, 'task-b3')).toBe(0);
   });
 });

@@ -70,8 +70,8 @@ and scriptable from CI. Attach to a live run with `opencode attach` any time.
 │   ├── operator/        # CRD reconciler (informer + reconciler loop)
 │   ├── dispatcher/      # Sidecar: session driver + MCP server (fail_run, get_status)
 │   ├── manager-controller/  # Board controller + decision engine + MCP tools
-│   ├── memory-service/      # Per-project vector embedding service (Bun + sqlite-vec)
-│   ├── web/             # Dashboard SPA + Hono server + bun:sqlite stats DB
+│   ├── memory-service/      # Per-project vector embedding service (Bun + pgvector)
+│   ├── web/             # Dashboard SPA + Hono server + PostgreSQL stats DB
 │   └── cli/             # beatctl — user-facing CLI
 └── scripts/            # Cluster image loader + smoke test helpers
 ```
@@ -459,7 +459,7 @@ flowchart TD
 flowchart LR
     POD[Run Pod\ndispatcher sidecar]
     POD -->|POST /api/stats/session\nfire-and-forget, non-fatal| WEB[percussionist-web pod]
-    WEB --> DB[(bun:sqlite\n/app/data/percussionist.db\n1 Gi PVC)]
+    WEB --> DB[(PostgreSQL\nsession/auth/analytics)]
     DB -->|hourly cleanup\nRETENTION_DAYS| DB
     USER[user / LLM CLI]
     USER -->|GET /api/stats/export| WEB
@@ -489,7 +489,7 @@ pnpm bundle
 
 | Command | What it does |
 |---------|-------------|
-| `beatctl deploy` | Install CRDs and apply operator + manager controller + web manifests; waits for rollouts. |
+| `beatctl deploy` | Install CRDs and apply PostgreSQL, operator, manager controller, and web manifests; waits for rollouts. |
 | `beatctl deploy --gitops` | Install the same manifests via Flux, pinned to a release, so later upgrades apply CRDs too. Add `--release <tag>` to pin a version other than the checkout's. |
 | `beatctl deploy --down` | Delete all operator/web/manager resources and CRDs. Removes the Flux bootstrap first if present. |
 | `beatctl web` | Port-forward the dashboard to `localhost` and open it in your browser. `localhost` is a secure context so browser notifications and drum audio work without HTTPS. |
@@ -1377,7 +1377,7 @@ version wins (project-local paths are searched before global).
 
 ## Session analytics
 
-Every run is recorded in a SQLite database embedded in the web pod, covering
+Every run is recorded in the control-plane PostgreSQL database, covering
 prompts, responses, tool invocations, files read/written, token counts, and
 timing. Intended for periodic LLM-assisted pattern analysis.
 
@@ -1431,12 +1431,18 @@ Override via `RETENTION_DAYS` on the `percussionist-web` Deployment (`0` = keep 
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `DATA_DIR` | `/app/data` | Directory for `percussionist.db` |
+| `DATABASE_URL` | — | PostgreSQL connection string, supplied by the `percussionist-db` Secret |
+| `DATABASE_POOL_MAX` | `10` | Maximum PostgreSQL pool connections |
 | `RETENTION_DAYS` | `30` | Days to retain session data (`0` = forever) |
 | `EXPORT_MAX_SESSIONS` | `200` | Max sessions returned by `GET /api/stats/export` (`days=0` truncates to the most recent N) |
 
-The PVC (`percussionist-web-db`, 1 Gi) is created by `k8s/deploy/web.yaml` and
-survives pod restarts and redeployments.
+For local web development, set `DATABASE_URL` to a PostgreSQL instance (or set
+`PERCUSSIONIST_ALLOW_PGLITE=1` to opt into an ephemeral PGlite database).
+
+PostgreSQL is provisioned by `k8s/deploy/postgres.yaml` (pgvector image) and
+`beatctl deploy` creates the `percussionist-db` Secret if it does not exist. For
+an external database, provide a `percussionist-db` Secret with a `url` key and
+omit the in-cluster PostgreSQL manifest from a custom kustomize overlay.
 
 ### Operator configuration
 
@@ -1459,10 +1465,12 @@ semantic context injection and automatic session summarization.
 
 When you set `spec.embedding.enabled: true` on a Project:
 1. The operator deploys a `memory-{project}` Deployment + Service running a
-   Bun server with bun:sqlite and the sqlite-vec vector extension.
-2. The memory service calls Ollama's embedding API to generate 768-dimensional
-   vectors (configurable via `spec.embedding.model` and `spec.embedding.dimensions`).
-3. The manager controller's MCP tools and prompt builder interact with the
+   Bun server backed by PostgreSQL/pgvector.
+2. The memory service calls Ollama's embedding API to generate vectors
+   (configurable via `spec.embedding.model` and `spec.embedding.dimensions`).
+3. Every query is scoped by the project's Kubernetes UID in the shared PostgreSQL
+   database, so deleting and recreating a project cannot expose old memories.
+4. The manager controller's MCP tools and prompt builder interact with the
    memory service via cluster DNS at `http://memory-{project}.percussionist.svc.cluster.local:4100`.
 
 ### Features

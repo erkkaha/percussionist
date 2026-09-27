@@ -1,8 +1,7 @@
 # Dockerfile for the percussionist memory/embedding service.
 #
-# Uses Debian-based Bun (not Alpine) because sqlite-vec does not ship a
-# prebuilt binary for musl/glibc. The glibc sqlite-vec-linux-x64 NPM optional
-# dependency works on Debian out of the box.
+# The service uses the PostgreSQL Drizzle driver and pgvector; no native SQLite
+# extension is required at runtime.
 #
 #   docker build -t percussionist/memory:dev -f images/memory/Dockerfile .
 
@@ -25,12 +24,13 @@ FROM deps AS build
 COPY packages/api/src           packages/api/src
 COPY packages/api/tsconfig.json packages/api/tsconfig.json
 COPY packages/memory-service/src           packages/memory-service/src
+COPY packages/memory-service/migrations   packages/memory-service/migrations
 COPY packages/memory-service/tsconfig.json packages/memory-service/tsconfig.json
 RUN ./node_modules/.bin/tsc -p packages/api/tsconfig.json \
  && ./node_modules/.bin/tsc -p packages/memory-service/tsconfig.json
 
-# --- runtime (Bun on Debian) --------------------------------------------------
-FROM oven/bun:${BUN_VERSION} AS runtime
+# --- runtime (Bun) ------------------------------------------------------------
+FROM oven/bun:${BUN_VERSION}-alpine AS runtime
 
 WORKDIR /app
 
@@ -40,12 +40,9 @@ COPY --from=build /repo/packages/api/dist               /app/packages/api/dist
 COPY --from=build /repo/packages/api/package.json       /app/packages/api/package.json
 COPY --from=build /repo/packages/api/node_modules       /app/packages/api/node_modules
 COPY --from=build /repo/packages/memory-service/dist    /app/packages/memory-service/dist
+COPY --from=build /repo/packages/memory-service/migrations /app/packages/memory-service/migrations
 COPY --from=build /repo/packages/memory-service/package.json /app/packages/memory-service/package.json
 COPY --from=build /repo/packages/memory-service/node_modules /app/packages/memory-service/node_modules
-
-# Data directory for the vector database (override DATA_DIR to mount a PVC here).
-ENV MEMORY_DB_PATH=/app/data/memory/vectors.db
-RUN mkdir -p /app/data/memory
 
 EXPOSE 4100
 ENV MEMORY_SERVICE_PORT=4100

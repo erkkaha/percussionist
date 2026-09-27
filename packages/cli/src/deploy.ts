@@ -18,6 +18,7 @@
 // configured, or pinned.
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -64,6 +65,10 @@ export interface DeployOpts {
   skipTls?: boolean;
   /** TLS Secret name as <ns>/<name>. */
   tlsSecret?: string;
+  /** PostgreSQL URL written to the percussionist-db Secret. */
+  databaseUrl?: string;
+  /** StorageClass for the bundled PostgreSQL PVC (default: cluster default). */
+  databaseStorageClass?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +116,102 @@ function kubectlApplyYaml(yaml: string): Promise<void> {
     child.stdin.write(yaml);
     child.stdin.end();
   });
+}
+
+const DATABASE_SECRET_NAME = 'percussionist-db';
+const DATABASE_USER = 'percussionist';
+const DATABASE_NAME = 'percussionist';
+const DATABASE_HOST = 'percussionist-postgres';
+
+/**
+ * True when the deployment's database lives in the bundled StatefulSet.
+ *
+ * The Secret is created once and never overwritten, so this is asked of the
+ * Secret as installed (not of `--database-url`, which only applies when the
+ * Secret is being created). A user who pointed `percussionist-db` at an
+ * external server must not get a second, unused PostgreSQL StatefulSet — and
+ * `deploy --down` must not delete a StatefulSet holding data they still want.
+ */
+function secretUrlPointsAtBundledPostgres(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname === DATABASE_HOST;
+  } catch {
+    return false;
+  }
+}
+
+function readDatabaseSecretUrl(namespace: string): string | undefined {
+  try {
+    const raw = kubectlOutput([
+      '-n',
+      namespace,
+      'get',
+      'secret',
+      DATABASE_SECRET_NAME,
+      '-o',
+      'jsonpath={.data.url}',
+    ]);
+    if (!raw) return undefined;
+    return atob(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+async function ensureDatabaseSecret(namespace: string, databaseUrl?: string): Promise<void> {
+  let exists = false;
+  try {
+    kubectlOutput(['-n', namespace, 'get', 'secret', DATABASE_SECRET_NAME, '-o', 'name']);
+    exists = true;
+  } catch {
+    exists = false;
+  }
+  if (exists) {
+    // The Secret is never overwritten: it holds the generated password for the
+    // bundled database, so regenerating it would strand the data already in the
+    // PVC. Say so, or a repeated `deploy --database-url ...` looks like it
+    // silently did nothing.
+    const current = readDatabaseSecretUrl(namespace);
+    if (databaseUrl && current && databaseUrl !== current) {
+      console.log(
+        `beatctl: keeping the existing ${DATABASE_SECRET_NAME} Secret (its url already points ` +
+          `at ${redactUrl(current)}). To switch databases, patch it yourself:\n` +
+          `  kubectl -n ${namespace} patch secret ${DATABASE_SECRET_NAME} ` +
+          `-p '{"stringData":{"url":${JSON.stringify(databaseUrl)}}}'`,
+      );
+    }
+    return;
+  }
+
+  const password = randomBytes(24).toString('base64url');
+  const url =
+    databaseUrl ??
+    process.env.PERCUSSIONIST_DATABASE_URL ??
+    `postgresql://${DATABASE_USER}:${encodeURIComponent(password)}@${DATABASE_HOST}:5432/${DATABASE_NAME}`;
+  await kubectlApplyYaml(`apiVersion: v1
+kind: Secret
+metadata:
+  name: ${DATABASE_SECRET_NAME}
+  namespace: ${namespace}
+type: Opaque
+stringData:
+  username: ${DATABASE_USER}
+  database: ${DATABASE_NAME}
+  password: ${password}
+  url: ${JSON.stringify(url)}
+`);
+  console.log(`beatctl: created ${DATABASE_SECRET_NAME} (${redactUrl(url)})`);
+}
+
+/** host/database only — never print a connection string's password. */
+function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname}/${parsed.pathname.replace(/^\//, '')}`;
+  } catch {
+    return '(unparseable url)';
+  }
 }
 
 /** True when the `microk8s` CLI is reachable on PATH. */
@@ -829,6 +930,7 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     // applied before the manager Deployment or the pod hangs in
     // ContainerCreating with "configmap agent-config not found".
     agentConfig: resolveManifest(repoRoot, 'k8s/deploy/agent-config.yaml'),
+    postgres: resolveManifest(repoRoot, 'k8s/deploy/postgres.yaml'),
     managerController: resolveManifest(repoRoot, 'k8s/deploy/manager-controller.yaml'),
     web: resolveManifest(repoRoot, 'k8s/deploy/web.yaml'),
     networkPolicy: resolveManifest(repoRoot, 'k8s/deploy/networkpolicy.yaml'),
@@ -848,6 +950,18 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
         '--wait=false',
       ]);
       await runKubectl(['delete', '-f', manifests.web, '--ignore-not-found', '--wait=false']);
+      // Only remove the bundled StatefulSet when percussionist-db still points
+      // at it. With an external DATABASE_URL the PVC may hold data the operator
+      // moved off it, and deleting it would destroy that.
+      if (secretUrlPointsAtBundledPostgres(readDatabaseSecretUrl(ns))) {
+        await runKubectl([
+          'delete',
+          '-f',
+          manifests.postgres,
+          '--ignore-not-found',
+          '--wait=false',
+        ]);
+      }
       await runKubectl([
         'delete',
         '-f',
@@ -897,6 +1011,10 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
 
   // Ensure the deploy namespace exists before applying anything.
   await ensureNamespace(ns);
+  await ensureDatabaseSecret(ns, opts.databaseUrl);
+  // Decided from the Secret as installed: an external DATABASE_URL must not
+  // bring up (or, on --down, delete) a second database.
+  const bundledPostgres = secretUrlPointsAtBundledPostgres(readDatabaseSecretUrl(ns));
 
   // Preflight (task 3) — addons, RBAC, storage, Traefik presence per platform.
   // Runs before TLS setup so the Traefik controller is present when
@@ -1050,6 +1168,45 @@ export async function runDeploy(opts: DeployOpts): Promise<void> {
     ]);
 
     console.log('beatctl: applying operator, manager controller and web manifests...');
+    // PostgreSQL first, and wait for it before anything that opens a pool: the
+    // web and memory pods crash-loop on a refused connection until PG is
+    // serving, which turns a slow first boot into a restart storm.
+    if (bundledPostgres) {
+      await runKubectl(['apply', '-f', manifests.postgres]);
+      if (opts.databaseStorageClass) {
+        // volumeClaimTemplates are immutable, so the class is patched onto the
+        // live StatefulSet rather than baked into the manifest (which ships
+        // without a storageClassName so the cluster default applies).
+        await runKubectl([
+          '-n',
+          ns,
+          'patch',
+          `statefulset/${DATABASE_HOST}`,
+          '--type=merge',
+          '-p',
+          JSON.stringify({
+            spec: {
+              volumeClaimTemplates: [{ spec: { storageClassName: opts.databaseStorageClass } }],
+            },
+          }),
+        ]);
+      }
+      if (opts.wait !== false) {
+        console.log('beatctl: waiting for the database to accept connections...');
+        await runKubectl([
+          '-n',
+          ns,
+          'rollout',
+          'status',
+          `statefulset/${DATABASE_HOST}`,
+          '--timeout=300s',
+        ]);
+      }
+    } else {
+      console.log(
+        'beatctl: percussionist-db points at an external PostgreSQL — skipping the bundled StatefulSet',
+      );
+    }
     await runKubectl(['apply', '-f', patchedOperator]);
     await runKubectl(['apply', '-f', manifests.agentConfig]);
     await runKubectl(['apply', '-f', manifests.managerController]);

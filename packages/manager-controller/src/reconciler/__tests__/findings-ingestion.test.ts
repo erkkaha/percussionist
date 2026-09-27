@@ -242,7 +242,7 @@ describe('ingestFindings', () => {
       {
         id: 'mem1',
         content: 'similar',
-        distance: 0.1,
+        distance: 0.005,
         metadata: { kind: 'finding', clusterId: 'c0' },
       },
     ]);
@@ -306,7 +306,7 @@ describe('ingestFindings', () => {
       {
         id: 'mem1',
         content: 'different',
-        distance: 0.5,
+        distance: 0.05,
         metadata: { kind: 'finding', clusterId: 'c0' },
       },
     ]);
@@ -316,6 +316,35 @@ describe('ingestFindings', () => {
 
     const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
     expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
+  });
+
+  // The memory service reports cosine distance; the pre-pgvector cutoff of 0.15
+  // was expressed in sqlite-vec's L2 metric. 0.15 L2 is 0.01125 cosine, so a
+  // reported 0.1 must NOT be treated as a duplicate any more.
+  it('does not treat the old L2 cutoff (0.1) as a duplicate under cosine distance', async () => {
+    const f1 = makeInboxFinding({ id: 'f1', dedupKey: 'dk-new' });
+    const existing = makeTriagedFinding({
+      id: 'f0',
+      clusterId: 'c0',
+      dedupKey: 'dk-old',
+    });
+    setupConfigMap([f1], [existing]);
+
+    queryMemorySpy.mockResolvedValue([
+      {
+        id: 'mem1',
+        content: 'related but distinct',
+        distance: 0.1,
+        metadata: { kind: 'finding', clusterId: 'c0' },
+      },
+    ]);
+
+    const project = makeProject({ embeddingEnabled: true });
+    await ingestFindings(project, namespace);
+
+    const patchArg = patchFindingsConfigMapSpy.mock.calls[0]?.[1] as Record<string, string | null>;
+    expect(patchArg[kube.triagedFindingKey('f1')]).toBeDefined();
+    expect(patchArg[kube.triagedFindingKey('c0')]).toBeUndefined();
   });
 
   it('auto-creates a BUILD task for high-severity bug findings', async () => {

@@ -34,7 +34,7 @@ kubeconfig
 # Start from k8s/local.example/.
 /k8s/local/
 
-# Runtime data (SQLite stats DB, etc.)
+# Local database files and backups
 packages/web/data/
 
 prds/

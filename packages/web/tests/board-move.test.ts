@@ -1,15 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Project, Task } from '@percussionist/api';
 import type { Hono } from 'hono';
 import * as kube from '../src/server/kube.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 const PROJECT_NAME = 'test-proj';
 const TASK_NAME = `${PROJECT_NAME}-build-abcd01`;
-const TEST_DATA_DIR = join('/tmp', `percussionist-board-move-${process.pid}`);
 
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.AUTH_DISABLED = '1';
 
 const MOCK_PROJECT = {
@@ -43,7 +40,7 @@ let getTaskSpy: ReturnType<typeof spyOn>;
 let patchTaskStatusSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
+  await createTestDb();
   getProjectSpy = spyOn(kube, 'getProject').mockResolvedValue(MOCK_PROJECT);
   getTaskSpy = spyOn(kube, 'getTask').mockResolvedValue(makeTask({ phase: 'idea' } as never));
   patchTaskStatusSpy = spyOn(kube, 'patchTaskStatus').mockResolvedValue(undefined as never);
@@ -51,12 +48,11 @@ beforeAll(async () => {
   app = createApp();
 });
 
-afterAll(() => {
+afterAll(async () => {
   getProjectSpy.mockRestore();
   getTaskSpy.mockRestore();
   patchTaskStatusSpy.mockRestore();
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
+  await closeTestDb();
   delete process.env.AUTH_DISABLED;
 });
 

@@ -46,6 +46,7 @@
     "hono": "4.13.7",
     "katex": "0.18.7",
     "lucide-react": "1.17.0",
+    "pg": "8.23.0",
     "react": "19.2.8",
     "react-diff-view": "3.3.3",
     "react-dom": "19.2.8",
@@ -63,11 +64,13 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/bun": "1.4.2",
+    "@types/pg": "8.23.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@types/web-push": "^3.6.4",

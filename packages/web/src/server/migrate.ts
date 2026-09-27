@@ -1,23 +1,51 @@
 // Standalone migration runner — used by `pnpm db:migrate`.
-// Applies all pending migrations from migrations/ to the target DB.
+// Applies all pending migrations from migrations-pg/ to the target DB.
 
-import { Database } from 'bun:sqlite';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
+import { existsSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { Client } from 'pg';
 
-const dataDir = process.env.DATA_DIR ?? './data';
-fs.mkdirSync(dataDir, { recursive: true });
-const dbPath = path.join(dataDir, 'percussionist.db');
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error('DATABASE_URL is required — it names the PostgreSQL database to migrate');
+}
 
-const sqlite = new Database(dbPath, { create: true });
-sqlite.exec('PRAGMA journal_mode=WAL;');
-sqlite.exec('PRAGMA foreign_keys=ON;');
+function resolveMigrationsFolder(): string {
+  const candidates: string[] = [];
+  const override = process.env.WEB_MIGRATIONS_DIR;
+  if (override) {
+    candidates.push(isAbsolute(override) ? override : resolve(process.cwd(), override));
+  }
+  const here = dirname(fileURLToPath(import.meta.url));
+  candidates.push(join(here, '..', '..', 'migrations-pg'));
+  candidates.push(join(process.cwd(), 'migrations-pg'));
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`migrations-pg directory not found (looked in ${candidates.join(', ')})`);
+}
 
-const db = drizzle(sqlite);
-const migrationsFolder = path.join(import.meta.dirname, '../../migrations');
+const migrationsFolder = resolveMigrationsFolder();
+const migrationClient = new Client({ connectionString });
+const migrationsTable = 'drizzle_web_migrations';
 
-console.log(`[migrate] applying migrations from ${migrationsFolder}`);
-migrate(db, { migrationsFolder });
-console.log(`[migrate] done — ${dbPath}`);
+try {
+  await migrationClient.connect();
+  await migrationClient.query('select pg_advisory_lock(hashtext($1))', [
+    'percussionist:web:migrations',
+  ]);
+  try {
+    console.log(`[migrate] applying migrations from ${migrationsFolder}`);
+    await migrate(drizzle(migrationClient), { migrationsFolder, migrationsTable });
+    console.log('[migrate] done');
+  } finally {
+    await migrationClient.query('select pg_advisory_unlock(hashtext($1))', [
+      'percussionist:web:migrations',
+    ]);
+  }
+} finally {
+  await migrationClient.end().catch(() => undefined);
+}

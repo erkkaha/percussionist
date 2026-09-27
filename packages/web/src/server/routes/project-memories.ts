@@ -1,7 +1,7 @@
 // routes/project-memories.ts — Project-scoped memory CRUD proxy routes.
 //
 // These routes proxy to the per-project memory service (memory-{project}.{ns}.svc.cluster.local)
-// which runs Bun on port 4100 with sqlite-vec for vector storage and search.
+// which runs Bun on port 4100 with PostgreSQL/pgvector for vector storage.
 
 import { Hono } from 'hono';
 import { adminAuth, auth } from '../auth.js';

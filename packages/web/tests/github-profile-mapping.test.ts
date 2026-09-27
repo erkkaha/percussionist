@@ -15,20 +15,15 @@
 // copy of the logic, so a config regression fails the test.
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 
-const TEST_DATA_DIR = join('/tmp', `percussionist-gh-map-${Date.now()}`);
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.SESSION_SECRET = 'test-session-secret-for-profile-mapping';
 process.env.WEB_BASE_URL = 'http://localhost:8080';
 process.env.GITHUB_CLIENT_ID = 'test-client-id';
 process.env.GITHUB_CLIENT_SECRET = 'test-client-secret';
 delete process.env.AUTH_DISABLED;
 
-mkdirSync(TEST_DATA_DIR, { recursive: true });
-
 const { getAuth, resetAuth } = await import('../src/server/lib/better-auth.js');
+const { closeTestDb, createTestDb } = await import('./helpers/pglite.js');
 
 /** Reach the configured github provider's mapProfileToUser. */
 function mapProfile(profile: Record<string, unknown>) {
@@ -39,13 +34,21 @@ function mapProfile(profile: Record<string, unknown>) {
   return provider.mapProfileToUser(profile);
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  // better-auth's drizzle adapter binds getDb() when the instance is built, so
+  // the database has to exist before getAuth() below.
+  await createTestDb();
   process.env.GITHUB_ALLOWED_LOGINS = 'erkkaha, SomeoneElse';
   resetAuth();
 });
 
-afterAll(() => {
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+afterAll(async () => {
+  await closeTestDb();
+  resetAuth();
+  delete process.env.SESSION_SECRET;
+  delete process.env.WEB_BASE_URL;
+  delete process.env.GITHUB_CLIENT_ID;
+  delete process.env.GITHUB_CLIENT_SECRET;
 });
 
 describe('githubLogin is persisted', () => {

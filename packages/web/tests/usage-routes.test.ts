@@ -1,22 +1,16 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { Hono } from 'hono';
-import { closeDb } from '../src/server/db.js';
 import { resetAuth } from '../src/server/lib/better-auth.js';
 import usageRouter from '../src/server/routes/usage.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 const prevAuthDisabled = process.env.AUTH_DISABLED;
 process.env.AUTH_DISABLED = '1';
 
-const dataDirs: string[] = [];
-
-function makeTestClient() {
-  const dataDir = join('/tmp', `percussionist-usage-routes-${Date.now()}-${Math.random()}`);
-  dataDirs.push(dataDir);
-  mkdirSync(dataDir, { recursive: true });
-  process.env.DATA_DIR = dataDir;
-  closeDb();
+// A fresh in-memory PGlite per test: every assertion here reads back rows the
+// test just wrote, so a sibling's rows would change the hand-checked totals.
+async function makeTestClient() {
+  await createTestDb();
   resetAuth();
 
   const app = new Hono();
@@ -37,13 +31,9 @@ function makeTestClient() {
   return { req, post };
 }
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeTestDb();
   resetAuth();
-  delete process.env.DATA_DIR;
-  for (const dir of dataDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
   process.env.AUTH_DISABLED = '1';
 });
 
@@ -51,8 +41,8 @@ beforeEach(() => {
   process.env.AUTH_DISABLED = '1';
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeTestDb();
   resetAuth();
   if (prevAuthDisabled !== undefined) {
     process.env.AUTH_DISABLED = prevAuthDisabled;
@@ -63,7 +53,7 @@ afterAll(() => {
 
 describe('usage routes per-project tracking', () => {
   it('heartbeat with project payload creates per-project rows and returns them from today endpoint', async () => {
-    const { post, req } = makeTestClient();
+    const { post, req } = await makeTestClient();
 
     const heartbeatRes = await post('/api/usage/heartbeat', {
       reviewing: 30,
@@ -114,7 +104,7 @@ describe('usage routes per-project tracking', () => {
   });
 
   it('uses idempotent max-upsert semantics for repeated same-day heartbeats', async () => {
-    const { post, req } = makeTestClient();
+    const { post, req } = await makeTestClient();
 
     const first = await post('/api/usage/heartbeat', {
       reviewing: 80,
@@ -164,7 +154,7 @@ describe('usage routes per-project tracking', () => {
   });
 
   it('accepts legacy heartbeat payloads without projectUsage', async () => {
-    const { post } = makeTestClient();
+    const { post } = await makeTestClient();
 
     await post('/api/usage/heartbeat', {
       reviewing: 40,

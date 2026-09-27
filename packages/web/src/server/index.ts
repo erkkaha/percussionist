@@ -11,12 +11,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
 import { attachWsHandlers, isAttachAuthorized, resolveAttachTarget } from './attach-ws.js';
-import { getDb } from './db.js';
+import { closeDb, initDb } from './db.js';
 import { NAMESPACE } from './kube.js';
 import { bootstrapAgentKeys, pruneExpiredRunKeys } from './lib/agent-keys.js';
 import { startPushTriggers } from './lib/push-triggers.js';
 import { runHousekeeping } from './lib/run-housekeeping.js';
-import { startMetricsCollector } from './metrics-collector.js';
+import { startMetricsCollector, stopMetricsCollector } from './metrics-collector.js';
 import stats, { RETENTION_DAYS, runRetentionCleanup } from './routes/stats.js';
 
 void stats; // imported for side-effect registration only (retention helpers)
@@ -83,20 +83,20 @@ const port = parseInt(process.env.PORT ?? '8080', 10);
 // ---------------------------------------------------------------------------
 // Stats DB — initialise eagerly so schema is ready before first request.
 
-getDb();
+await initDb();
 console.log(
   `[stats] retention policy: ${RETENTION_DAYS > 0 ? `${RETENTION_DAYS} days` : 'disabled (keep forever)'}`,
 );
 
 // ---------------------------------------------------------------------------
-// Retention cron — run hourly. Wrapped in runHousekeeping so a thrown DB error
-// (e.g. SQLITE_BUSY under a concurrent stats-POST write) is logged and retried
-// on the next tick instead of surfacing as an uncaughtException that kills the
-// pod — and every open SSE stream and attach terminal with it.
+// Retention cron — run hourly. Wrapped in runHousekeeping so a database error
+// (e.g. a connection reset under a concurrent stats-POST write) is logged and
+// retried on the next tick instead of surfacing as an uncaughtException that
+// kills the pod — and every open SSE stream and attach terminal with it.
 
 const retentionCleanup = runHousekeeping('runRetentionCleanup', runRetentionCleanup);
 void retentionCleanup.run();
-setInterval(() => void retentionCleanup.run(), 60 * 60 * 1000);
+const retentionInterval = setInterval(() => void retentionCleanup.run(), 60 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
 // Agent API keys.
@@ -107,17 +107,19 @@ setInterval(() => void retentionCleanup.run(), 60 * 60 * 1000);
 // component (operator, manager-controller) gets a key written into its own
 // Secret; per-run keys are minted on demand by the operator.
 
+let pruneInterval: ReturnType<typeof setInterval> | null = null;
+
 if (process.env.AUTH_DISABLED !== '1') {
   void bootstrapAgentKeys();
 
   // Expired run keys are refused by verification regardless; this only stops
   // rows accumulating for runs whose pods died without presenting the key again.
   // Wrapped in runHousekeeping: pruneExpiredRunKeys has no internal catch, so a
-  // single SQLITE_BUSY used to reject into the unhandledRejection handler and
+  // single database error used to reject into the unhandledRejection handler and
   // call process.exit(1). Errors are logged and retried on the next tick.
   const pruneKeys = runHousekeeping('pruneExpiredRunKeys', pruneExpiredRunKeys);
   void pruneKeys.run();
-  const pruneInterval = setInterval(
+  pruneInterval = setInterval(
     () => {
       void pruneKeys.run();
     },
@@ -136,6 +138,33 @@ void startMetricsCollector();
 // subscribed device. Idle (no K8s polling) while nobody is subscribed.
 
 startPushTriggers();
+
+let shuttingDown = false;
+
+/**
+ * Single graceful-shutdown path for both signals. Kubernetes sends SIGTERM on
+ * pod deletion; SIGINT is the local/Ctrl-C equivalent. They must behave
+ * identically: stop accepting work, stop the timers, drain the pool, exit.
+ * (Neither the metrics collector nor the SSE/attach streams survive a bare
+ * `process.exit`, so the drain has to happen before it.)
+ */
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[web] ${signal} received — shutting down`);
+  try {
+    stopMetricsCollector();
+    clearInterval(retentionInterval);
+    if (pruneInterval) clearInterval(pruneInterval);
+    await closeDb();
+  } catch (e) {
+    console.error('[web] shutdown error:', e);
+  }
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
 
 // ---------------------------------------------------------------------------
 // Start server

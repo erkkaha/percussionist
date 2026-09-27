@@ -4,13 +4,16 @@ Projects can enable a per-project vector memory service for semantic context ret
 
 ## Overview
 
-When `spec.embedding.enabled: true`, the operator deploys a `memory-{project}` Deployment + Service running a Bun server with `bun:sqlite` and `sqlite-vec` for vector storage and search.
+When `spec.embedding.enabled: true`, the operator deploys a `memory-{project}`
+Deployment + Service running a Bun server backed by PostgreSQL/pgvector. Every
+query is scoped by the Project's Kubernetes UID.
 
 ## How it Works
 
 ### 1. Memory Service Pod
 
-A `memory-{project}` Bun container runs alongside the project's data PVC. It exposes REST endpoints on port 4100 for:
+A `memory-{project}` Bun container connects to the shared PostgreSQL/pgvector
+service and exposes REST endpoints on port 4100 for:
 
 - Storing memories with vector embeddings
 - Semantic search across stored memories
@@ -54,18 +57,13 @@ kubectl apply -f k8s/deploy/ollama.yaml
 
 Model warmup is handled by the memory service at startup.
 
-- **A glibc runtime** — `sqlite-vec` ships a prebuilt `vec0.so` that links glibc
-  (`libc.so.6`, `GLIBC_2.14` symbols) and publishes no `libc` field, so package
-  managers install it on Alpine too, where it then fails to `dlopen`. Alpine's
-  `libc6-compat` supplies the `libc.so.6` name but not glibc's versioned symbols,
-  so it is not sufficient. `images/memory/Dockerfile` runs the service on Debian
-  `oven/bun` for this reason.
-
-  On a musl host the extension cannot load, so `packages/memory-service` skips
-  its vector-backed tests with the reason rather than failing (which previously
-  took the whole-monorepo `pnpm test`, and the pre-commit hook with it). If you
-  see `skipping vector-backed tests` locally, that is why — the same suite runs
-  in full on any glibc machine.
+- **PostgreSQL with pgvector** — the `vector` extension must be installed on the
+  database. The bundled `pgvector/pgvector` image used by
+  `k8s/deploy/postgres.yaml` includes it. Unit tests use PGlite with
+  `@electric-sql/pglite-pgvector` and do not require a running PostgreSQL server.
+- The memory service reads `DATABASE_URL` from the `percussionist-db` Secret and
+  applies its committed migrations at startup. `MEMORY_PROJECT` scopes rows to
+  the owning Project.
 
 ## Resources
 

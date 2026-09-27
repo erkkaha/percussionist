@@ -5,11 +5,9 @@
 // talks to real push services; VAPID "keys" are deterministic strings.
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { Hono } from 'hono';
 import type { WebPushError } from 'web-push';
-import { closeDb, getDb } from '../src/server/db.js';
+import { getDb } from '../src/server/db.js';
 import { resetAuth } from '../src/server/lib/better-auth.js';
 import {
   _resetVapidCacheForTests,
@@ -22,11 +20,11 @@ import {
 } from '../src/server/lib/push.js';
 import pushRoute from '../src/server/routes/push.js';
 import { pushSubscription, user } from '../src/server/schema.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 const prevAuthDisabled = process.env.AUTH_DISABLED;
 process.env.AUTH_DISABLED = '1';
 
-const dataDirs: string[] = [];
 let keyCounter = 0;
 
 /** Deterministic fake web-push: records sends, fails endpoints by marker. */
@@ -52,18 +50,8 @@ function fakeWebPush() {
   return sent;
 }
 
-function freshDb(): void {
-  const dataDir = join('/tmp', `percussionist-push-${Date.now()}-${Math.random()}`);
-  dataDirs.push(dataDir);
-  mkdirSync(dataDir, { recursive: true });
-  process.env.DATA_DIR = dataDir;
-  closeDb();
-  resetAuth();
-  _resetVapidCacheForTests();
-}
-
-function seedUser(id: string): void {
-  getDb()
+async function seedUser(id: string): Promise<void> {
+  await getDb()
     .insert(user)
     .values({
       id,
@@ -72,68 +60,65 @@ function seedUser(id: string): void {
       emailVerified: false,
       createdAt: new Date(),
       updatedAt: new Date(),
-    })
-    .run();
+    });
 }
 
 const SUB = { endpoint: 'https://push.example/dev-1', p256dh: 'p256', auth: 'authkey' };
 
-beforeEach(() => {
+beforeEach(async () => {
   process.env.AUTH_DISABLED = '1';
-  freshDb();
+  await createTestDb();
+  resetAuth();
+  _resetVapidCacheForTests();
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeTestDb();
   resetAuth();
   _resetVapidCacheForTests();
   _setWebPushForTests(null);
-  delete process.env.DATA_DIR;
-  for (const dir of dataDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
   if (prevAuthDisabled !== undefined) process.env.AUTH_DISABLED = prevAuthDisabled;
   else delete process.env.AUTH_DISABLED;
 });
 
 describe('VAPID keypair', () => {
-  it('is generated once and returned stably from the DB afterwards', () => {
+  it('is generated once and returned stably from the DB afterwards', async () => {
     fakeWebPush();
-    const first = getVapidKeys();
-    const second = getVapidKeys();
+    const first = await getVapidKeys();
+    const second = await getVapidKeys();
     expect(second).toEqual(first);
 
     // Survives the in-memory cache being dropped — read back from the DB.
     _resetVapidCacheForTests();
-    expect(getVapidKeys()).toEqual(first);
+    expect(await getVapidKeys()).toEqual(first);
   });
 });
 
 describe('subscription storage', () => {
-  it('saves, lists, and deletes a subscription for its owner', () => {
-    seedUser('alice');
-    saveSubscription('alice', SUB, 'TestBrowser/1.0');
+  it('saves, lists, and deletes a subscription for its owner', async () => {
+    await seedUser('alice');
+    await saveSubscription('alice', SUB, 'TestBrowser/1.0');
 
-    const listed = listSubscriptions('alice');
+    const listed = await listSubscriptions('alice');
     expect(listed).toHaveLength(1);
     expect(listed[0].endpoint).toBe(SUB.endpoint);
     expect(listed[0].userAgent).toBe('TestBrowser/1.0');
 
     // Someone else cannot remove it.
-    seedUser('mallory');
-    expect(deleteSubscription('mallory', SUB.endpoint)).toBe(false);
-    expect(deleteSubscription('alice', SUB.endpoint)).toBe(true);
-    expect(listSubscriptions('alice')).toHaveLength(0);
+    await seedUser('mallory');
+    expect(await deleteSubscription('mallory', SUB.endpoint)).toBe(false);
+    expect(await deleteSubscription('alice', SUB.endpoint)).toBe(true);
+    expect(await listSubscriptions('alice')).toHaveLength(0);
   });
 
-  it('re-binds an endpoint to the new user on re-subscribe (sign-out/sign-in)', () => {
-    seedUser('alice');
-    seedUser('bob');
-    saveSubscription('alice', SUB);
-    saveSubscription('bob', { ...SUB, p256dh: 'p256-new' });
+  it('re-binds an endpoint to the new user on re-subscribe (sign-out/sign-in)', async () => {
+    await seedUser('alice');
+    await seedUser('bob');
+    await saveSubscription('alice', SUB);
+    await saveSubscription('bob', { ...SUB, p256dh: 'p256-new' });
 
-    expect(listSubscriptions('alice')).toHaveLength(0);
-    const bobs = listSubscriptions('bob');
+    expect(await listSubscriptions('alice')).toHaveLength(0);
+    const bobs = await listSubscriptions('bob');
     expect(bobs).toHaveLength(1);
     expect(bobs[0].endpoint).toBe(SUB.endpoint);
   });
@@ -142,17 +127,29 @@ describe('subscription storage', () => {
 describe('sendPushToUser', () => {
   it('sends to every device, counts failures, and prunes gone subscriptions', async () => {
     const sent = fakeWebPush();
-    seedUser('alice');
-    saveSubscription('alice', { endpoint: 'https://push.example/ok', p256dh: 'k', auth: 'a' });
-    saveSubscription('alice', { endpoint: 'https://push.example/gone', p256dh: 'k', auth: 'a' });
-    saveSubscription('alice', { endpoint: 'https://push.example/flaky', p256dh: 'k', auth: 'a' });
+    await seedUser('alice');
+    await saveSubscription('alice', {
+      endpoint: 'https://push.example/ok',
+      p256dh: 'k',
+      auth: 'a',
+    });
+    await saveSubscription('alice', {
+      endpoint: 'https://push.example/gone',
+      p256dh: 'k',
+      auth: 'a',
+    });
+    await saveSubscription('alice', {
+      endpoint: 'https://push.example/flaky',
+      p256dh: 'k',
+      auth: 'a',
+    });
 
     const result = await sendPushToUser('alice', { title: 'Test' });
     expect(result).toEqual({ sent: 1, failed: 1, pruned: 1 });
     expect(sent).toEqual(['https://push.example/ok']);
 
     // The gone endpoint was deleted; the flaky one is retained for next time.
-    const remaining = getDb().select().from(pushSubscription).all();
+    const remaining = await getDb().select().from(pushSubscription);
     expect(remaining.map((r) => r.endpoint).sort()).toEqual([
       'https://push.example/flaky',
       'https://push.example/ok',

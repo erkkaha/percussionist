@@ -39,6 +39,7 @@ import {
 } from '@percussionist/api';
 import { errorMessage } from '@percussionist/kube';
 import type { DoctorCheck, DoctorCheckResult } from './doctor.js';
+import { secretHasKeys } from './doctor-runtime.js';
 import { withProbeTimeout } from './doctor-util.js';
 import type { DoctorClients } from './k8s-clients.js';
 import { listAllProjects } from './kube.js';
@@ -585,10 +586,18 @@ export function kubectlExecProbe(opts: ExecProbeOptions): Promise<{ ok: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// storage — default StorageClass exists, web + per-project data PVCs are Bound,
-// and the operator's DEFAULT_STORAGE_CLASS env resolves to a real StorageClass.
+// storage — default StorageClass exists, the in-cluster PostgreSQL StatefulSet
+// is ready, per-project data PVCs are Bound, and the operator's
+// DEFAULT_STORAGE_CLASS env resolves to a real StorageClass.
+//
+// The web database is PostgreSQL (k8s/deploy/postgres.yaml), not a PVC, and a
+// deployment may point `percussionist-db` at an external server instead — so a
+// missing StatefulSet is a warning, not a problem. An existing-but-unready
+// StatefulSet is a problem: the in-cluster database is declared and not serving.
 
-const WEB_DB_PVC = 'percussionist-web-db-v3';
+const POSTGRES_STATEFULSET = 'percussionist-postgres';
+const DB_SECRET_NAME = 'percussionist-db';
+const DB_STATEFULSET_SECRET_KEYS = ['username', 'password', 'database'];
 const OPERATOR_DEPLOYMENT = 'percussionist-operator';
 const DEFAULT_STORAGE_CLASS_ENV = 'DEFAULT_STORAGE_CLASS';
 const DEFAULT_STORAGE_CLASS_FALLBACK = 'standard';
@@ -628,25 +637,47 @@ export async function checkStorage(
     );
   }
 
-  // Web PVC.
+  // In-cluster PostgreSQL StatefulSet (absent when an external database is used).
   try {
-    const pvc: V1PersistentVolumeClaim = await withProbeTimeout(
-      clients.core.readNamespacedPersistentVolumeClaim({ name: WEB_DB_PVC, namespace }),
+    const statefulSet = await withProbeTimeout(
+      clients.apps.readNamespacedStatefulSet({ name: POSTGRES_STATEFULSET, namespace }),
       timeoutMs,
-      `read PVC ${WEB_DB_PVC}`,
+      `read StatefulSet ${POSTGRES_STATEFULSET}`,
     );
-    const phase = pvc.status?.phase ?? 'Unknown';
-    if (phase === 'Bound') {
-      // ok
-    } else if (phase === 'Pending') {
-      warnings.push(`PVC ${namespace}/${WEB_DB_PVC} is Pending (storage provisioning in progress)`);
-    } else if (phase === 'Lost' || phase === 'Failed') {
-      problems.push(`PVC ${namespace}/${WEB_DB_PVC} is ${phase}`);
-    } else {
-      problems.push(`PVC ${namespace}/${WEB_DB_PVC} is ${phase}`);
+    const readyReplicas = statefulSet.status?.readyReplicas ?? 0;
+    if (readyReplicas < 1) {
+      problems.push(
+        `StatefulSet ${namespace}/${POSTGRES_STATEFULSET} not ready (readyReplicas=${readyReplicas})`,
+      );
+    }
+    // The StatefulSet feeds POSTGRES_USER/POSTGRES_DB/POSTGRES_PASSWORD to the
+    // container with optional: false, so a Secret carrying only `url` leaves the
+    // pod stuck in CreateContainerConfigError. The `url` key itself is checked
+    // by the runtime `credentials` check.
+    try {
+      const secret = await withProbeTimeout(
+        clients.core.readNamespacedSecret({ name: DB_SECRET_NAME, namespace }),
+        timeoutMs,
+        `read secret ${DB_SECRET_NAME}`,
+      );
+      const missing = secretHasKeys(secret, DB_STATEFULSET_SECRET_KEYS);
+      if (missing.length > 0) {
+        problems.push(
+          `Secret ${namespace}/${DB_SECRET_NAME} missing key(s) required by StatefulSet ` +
+            `${POSTGRES_STATEFULSET}: ${missing.join(', ')} (regenerate with \`beatctl deploy\`, or ` +
+            'delete the StatefulSet to use an external database)',
+        );
+      }
+    } catch (e) {
+      problems.push(
+        `Secret ${namespace}/${DB_SECRET_NAME} missing or unreadable: ${errorMessage(e)} — ` +
+          `StatefulSet ${POSTGRES_STATEFULSET} cannot start without it`,
+      );
     }
   } catch (e) {
-    problems.push(`PVC ${namespace}/${WEB_DB_PVC} missing: ${errorMessage(e)}`);
+    warnings.push(
+      `StatefulSet ${namespace}/${POSTGRES_STATEFULSET} missing or unreadable: ${errorMessage(e)} — expected when the web database is external; verify the percussionist-db Secret "url" key points at a reachable PostgreSQL`,
+    );
   }
 
   // Per-project data PVCs.
@@ -711,7 +742,7 @@ export async function checkStorage(
   if (problems.length === 0 && warnings.length === 0) {
     return {
       status: 'pass',
-      message: 'default StorageClass present; web and project data PVCs Bound',
+      message: `default StorageClass present; ${POSTGRES_STATEFULSET} ready; project data PVCs Bound`,
     };
   }
   if (problems.length === 0) {

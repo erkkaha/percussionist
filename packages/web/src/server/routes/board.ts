@@ -1,6 +1,6 @@
 // routes/board.ts — board endpoints nested under projects.
 //
-// Tasks are now first-class Task CRs — state lives in K8s, not SQLite.
+// Tasks are now first-class Task CRs — state lives in K8s, not the database.
 //
 // Mounted at /api/projects (so :project param is accessible).
 //
@@ -96,16 +96,14 @@ export async function appendTaskEvent(
 ): Promise<void> {
   try {
     const db = getDb();
-    db.insert(taskEvents)
-      .values({
-        project,
-        taskName,
-        taskType,
-        eventType,
-        payload: JSON.stringify(payload),
-        createdAt: new Date().toISOString(),
-      })
-      .run();
+    await db.insert(taskEvents).values({
+      project,
+      taskName,
+      taskType,
+      eventType,
+      payload: JSON.stringify(payload),
+      createdAt: new Date().toISOString(),
+    });
   } catch {
     // Event logging is best-effort — never fail the main operation.
   }

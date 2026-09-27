@@ -26,6 +26,7 @@ resources:
   # volume with optional: false. kustomize emits ConfigMaps before Deployments,
   # so the ordering below is honoured on apply.
   - agent-config.yaml
+  - postgres.yaml
   - operator.yaml
   - manager-controller.yaml
   - web.yaml

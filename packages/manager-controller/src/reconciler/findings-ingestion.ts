@@ -27,6 +27,26 @@ const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 
 const MAX_BOARD_FINDINGS = 100;
 
+/**
+ * Maximum cosine distance at which two findings are considered the same issue.
+ *
+ * The memory service used to be backed by sqlite-vec, whose `vec0` default
+ * distance metric is plain (unsquared) Euclidean L2. That was measured against
+ * sqlite-vec 0.1.9 itself — two orthogonal unit vectors come back 1.414 apart,
+ * not the 2.0 a squared metric would give — using synthetic vectors, not a live
+ * model.
+ *
+ * The conversion below is exact *because the memory service stores unit-norm
+ * vectors* (see toEmbeddingVector in packages/memory-service/src/db.ts): for
+ * unit vectors `l2 = sqrt(2 * cosineDistance)`, so the historical 0.15 L2 cutoff
+ * is 0.15² / 2 = 0.01125 in cosine space. Without that normalisation the
+ * conversion would depend on whatever magnitude the embedding model emits, and
+ * a model whose norms exceed 1 would make this a far tighter gate than the L2
+ * value it replaces. If the normalisation ever goes away, recalibrate this
+ * against the live model rather than re-deriving it from 0.15.
+ */
+const SEMANTIC_DUP_MAX_DISTANCE = 0.15 ** 2 / 2;
+
 const AUTO_TASK_SEVERITIES = new Set<string>([
   FindingSeverity.enum.high,
   FindingSeverity.enum.critical,
@@ -142,7 +162,7 @@ export async function ingestFindings(project: Project, ns: string = NAMESPACE): 
         );
         const findingsResults = results.filter((r) => r.metadata?.kind === 'finding');
         const nearestFinding = findingsResults[0];
-        if (nearestFinding && nearestFinding.distance < 0.15) {
+        if (nearestFinding && nearestFinding.distance < SEMANTIC_DUP_MAX_DISTANCE) {
           const matchId = nearestFinding.metadata?.clusterId as string | undefined;
           if (matchId) {
             const canonical = triagedMap.get(matchId);

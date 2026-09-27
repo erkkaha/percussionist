@@ -42,7 +42,7 @@ session.get('/:name/session', auth(), async (c) => {
     }
     // Run CR deleted (run TTL) — the session ID may survive in the stats DB.
     runMissing = true;
-    sessionID = lookupSessionIdByRunName(name) ?? '';
+    sessionID = (await lookupSessionIdByRunName(name)) ?? '';
   }
 
   if (!runMissing && !sessionID) {
@@ -100,7 +100,7 @@ session.get('/:name/session', auth(), async (c) => {
   // 4. Fall back to the stored messages in the stats DB. This is the durable
   //    source for deleted runs (the bug-fix path): the dispatcher persisted
   //    every message's parts, so the conversation survives the run TTL.
-  const replay = replaySessionFromDb(name);
+  const replay = await replaySessionFromDb(name);
   if (replay) {
     return c.json({ sessionID: replay.sessionID, messages: replay.messages, source: 'db' });
   }

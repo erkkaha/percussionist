@@ -84,6 +84,12 @@ interface SecretExpectation {
 }
 
 const REQUIRED_SECRETS: SecretExpectation[] = [
+  // `url` is all the web/manager/memory containers read (DATABASE_URL). The
+  // bundled StatefulSet additionally consumes `username`/`password`/`database`
+  // as POSTGRES_* env — those are only required when that StatefulSet exists,
+  // so they are checked in doctor-static's storage check instead of here, where
+  // an external database is indistinguishable from a missing one.
+  { name: 'percussionist-db', keys: ['url'] },
   { name: 'operator-api-key', keys: ['token'] },
   { name: 'manager-api-key', keys: ['token'] },
   { name: 'manager-mcp-token', keys: ['token'] },
@@ -212,7 +218,7 @@ export async function checkCredentials(
   };
 }
 
-function secretHasKeys(secret: V1Secret, keys: string[]): string[] {
+export function secretHasKeys(secret: V1Secret, keys: string[]): string[] {
   const present = new Set<string>([
     ...Object.keys(secret.data ?? {}),
     ...Object.keys(secret.stringData ?? {}),

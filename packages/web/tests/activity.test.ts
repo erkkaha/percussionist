@@ -8,18 +8,16 @@
 // assert id-DESC order plus exact, gap-free `before=<min id>` pagination.
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { createApp } from '../src/server/app.js';
-import { closeDb, getDb, taskEvents } from '../src/server/db.js';
+import { getDb, taskEvents } from '../src/server/db.js';
+import { closeTestDb, createTestDb } from './helpers/pglite.js';
 
 // ---------------------------------------------------------------------------
-// Test DB isolation — must be set before the first getDb()/request, because
-// getDb() is lazy.
+// Test DB isolation — a fresh in-memory PGlite for the file, installed before
+// the first getDb()/request because getDb() is lazy. Every test below scopes its
+// queries to its own project, so the shared id sequence does not leak between
+// them.
 
-const TEST_DATA_DIR = join('/tmp', `percussionist-activity-${Date.now()}`);
-
-process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.AUTH_DISABLED = '1';
 
 const app = createApp();
@@ -28,8 +26,10 @@ const app = createApp();
 // the same second, where createdAt collides but ids stay distinct.
 const SAME_SECOND = '2025-01-01 12:00:00';
 
-function insertEvent(project: string, taskName: string, createdAt: string): number {
-  const result = getDb()
+// Postgres has no lastInsertRowid: an insert that needs its generated key asks
+// for it back with .returning().
+async function insertEvent(project: string, taskName: string, createdAt: string): Promise<number> {
+  const rows = await getDb()
     .insert(taskEvents)
     .values({
       project,
@@ -39,8 +39,10 @@ function insertEvent(project: string, taskName: string, createdAt: string): numb
       payload: '{}',
       createdAt,
     })
-    .run();
-  return Number(result.lastInsertRowid);
+    .returning({ id: taskEvents.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error('insertEvent returned no id');
+  return id;
 }
 
 interface ActivityResponse {
@@ -54,14 +56,12 @@ async function fetchActivity(query: string): Promise<ActivityResponse> {
   return (await res.json()) as ActivityResponse;
 }
 
-beforeAll(() => {
-  mkdirSync(TEST_DATA_DIR, { recursive: true });
+beforeAll(async () => {
+  await createTestDb();
 });
 
-afterAll(() => {
-  closeDb();
-  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
+afterAll(async () => {
+  await closeTestDb();
   delete process.env.AUTH_DISABLED;
 });
 
@@ -70,7 +70,7 @@ describe('GET /api/activity cursor consistency', () => {
     const project = 'act-proj-same-second';
     const ids: number[] = [];
     for (let i = 0; i < 5; i++) {
-      ids.push(insertEvent(project, `task-${i}`, SAME_SECOND));
+      ids.push(await insertEvent(project, `task-${i}`, SAME_SECOND));
     }
 
     const { events } = await fetchActivity(`?project=${project}&limit=10`);
@@ -85,8 +85,8 @@ describe('GET /api/activity cursor consistency', () => {
     const project = 'act-proj-mixed-ts';
     // Insert an event, then a *later* id carrying an *earlier* timestamp. id is
     // the cursor key, so id DESC must win regardless of createdAt.
-    const firstId = insertEvent(project, 'task-a', '2025-01-01 12:00:00');
-    const secondId = insertEvent(project, 'task-b', '2025-01-01 11:00:00');
+    const firstId = await insertEvent(project, 'task-a', '2025-01-01 12:00:00');
+    const secondId = await insertEvent(project, 'task-b', '2025-01-01 11:00:00');
 
     const { events } = await fetchActivity(`?project=${project}&limit=10`);
     expect(events.map((e) => e.id)).toEqual([secondId, firstId]);
@@ -97,7 +97,7 @@ describe('GET /api/activity cursor consistency', () => {
     const project = 'act-proj-cursor';
     const ids: number[] = [];
     for (let i = 0; i < 6; i++) {
-      ids.push(insertEvent(project, `task-${i}`, SAME_SECOND));
+      ids.push(await insertEvent(project, `task-${i}`, SAME_SECOND));
     }
 
     // First page: newest 4 of the 6, ordered by id DESC.
@@ -117,9 +117,9 @@ describe('GET /api/activity cursor consistency', () => {
 
   it('before cursor is exclusive of the given id', async () => {
     const project = 'act-proj-exclusive';
-    const idA = insertEvent(project, 'task-a', SAME_SECOND);
-    const idB = insertEvent(project, 'task-b', SAME_SECOND);
-    insertEvent(project, 'task-c', SAME_SECOND);
+    const idA = await insertEvent(project, 'task-a', SAME_SECOND);
+    const idB = await insertEvent(project, 'task-b', SAME_SECOND);
+    await insertEvent(project, 'task-c', SAME_SECOND);
 
     const { events } = await fetchActivity(`?project=${project}&limit=10&before=${idB}`);
     expect(events.map((e) => e.id)).toEqual([idA]);

@@ -494,15 +494,118 @@ ${priorityLine}\
 }
 
 /**
- * Deploy a minimal web pod into the e2e namespace so tests can exercise the
- * web diff/route endpoints against resources in that namespace.
- *
- * Uses an emptyDir for the SQLite database instead of the production PVC, and
- * disables auth so tests can call endpoints without a token.
+ * Deploy a minimal PostgreSQL/pgvector database and web pod into the e2e
+ * namespace so tests can exercise the web diff/route endpoints against
+ * resources in that namespace. Auth is disabled so tests can call endpoints
+ * without a token.
  */
 export async function applyWebDeployment(ns: string): Promise<void> {
   const image = process.env.E2E_WEB_IMAGE ?? 'ghcr.io/erkkaha/percussionist/web:latest';
   console.log(`==> Deploy web watcher into ${ns} (${image})`);
+  // The database goes up first and is waited on before the web Deployment is
+  // applied. Applying both at once and waiting afterwards leaves the web pod
+  // crash-looping on a refused connection for as long as initdb takes, which
+  // burns its restart budget and makes the first E2E run flaky.
+  await kubectlApply(`\
+apiVersion: v1
+kind: Secret
+metadata:
+  name: percussionist-db
+  namespace: ${ns}
+type: Opaque
+stringData:
+  username: percussionist
+  database: percussionist
+  password: percussionist
+  url: postgresql://percussionist:percussionist@percussionist-postgres:5432/percussionist
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: percussionist-postgres
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: percussionist-postgres
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/name: percussionist
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: percussionist-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: percussionist
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: percussionist
+        app.kubernetes.io/component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:0.8.6-pg18
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: percussionist
+            - name: POSTGRES_DB
+              value: percussionist
+            - name: POSTGRES_PASSWORD
+              value: percussionist
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+    spec:
+      accessModes: [ReadWriteOnce]
+      resources:
+        requests:
+          storage: 2Gi
+`);
+  await kubectl([
+    'rollout',
+    'status',
+    'statefulset/percussionist-postgres',
+    '-n',
+    ns,
+    '--timeout=180s',
+  ]);
+  console.log(`    PostgreSQL ready in ${ns}`);
+
   await kubectlApply(`\
 apiVersion: v1
 kind: ServiceAccount
@@ -632,8 +735,10 @@ spec:
               value: "${ns}"
             - name: PORT
               value: "8080"
-            - name: DATA_DIR
-              value: /app/data
+            - name: DATABASE_URL
+              value: postgresql://percussionist:percussionist@percussionist-postgres:5432/percussionist
+            - name: DATABASE_POOL_MAX
+              value: "4"
             - name: RETENTION_DAYS
               value: "30"
             - name: AUTH_DISABLED
@@ -642,7 +747,7 @@ spec:
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/ready
               port: 8080
             initialDelaySeconds: 3
             periodSeconds: 5
@@ -652,13 +757,8 @@ spec:
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 15
-          volumeMounts:
-            - name: web-db
-              mountPath: /app/data
-      volumes:
-        - name: web-db
-          emptyDir: {}
 `);
+  await kubectl(['rollout', 'status', 'deployment/percussionist-web', '-n', ns, '--timeout=180s']);
   console.log(`    Web watcher deployed into ${ns}`);
 }
 

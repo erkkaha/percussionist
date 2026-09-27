@@ -3,9 +3,11 @@
 // Exported so tests can import just the app without triggering Bun.serve(),
 // getDb() eager init, setInterval, or any other startup side-effects.
 
+import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
 import { logger } from 'hono/logger';
+import { getDb } from './db.js';
 import { NAMESPACE } from './kube.js';
 import { getAuth } from './lib/better-auth.js';
 import activity from './routes/activity.js';
@@ -97,6 +99,15 @@ export function createApp() {
       authDisabled: process.env.AUTH_DISABLED === '1',
     }),
   );
+
+  app.get('/api/ready', async (c) => {
+    try {
+      await getDb().execute(sql`select 1`);
+      return c.json({ ok: true, namespace: NAMESPACE });
+    } catch (e) {
+      return c.json({ ok: false, error: (e as Error).message }, 503);
+    }
+  });
 
   return app;
 }

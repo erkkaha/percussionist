@@ -1365,7 +1365,7 @@ export async function runPrompt(
 
   // Always flush tokens, snapshot, and persist stats — whether the run
   // succeeded or failed.  This ensures the manager always has a ConfigMap
-  // to read for facilitation context and SQLite always has a record.
+  // to read for facilitation context and the web database always has a record.
   await tokens.flush(doPatchStatus, true);
   await doSnapshot(coreApi, runName, runNamespace, runUid, sessionID);
 

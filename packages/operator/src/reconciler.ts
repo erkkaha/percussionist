@@ -1392,9 +1392,6 @@ export async function reconcileProject(project: Project): Promise<void> {
   if (shouldReconcileMemoryService(project)) {
     log(`${logPrefix} reconciling memory-service resources`);
 
-    // Ensure data PVC exists first (memory-service needs it).
-    if (!(await ensureDataPvcOrBail(project, ns, logPrefix))) return;
-
     // Upsert Deployment + Service
     await upsertDeployment(
       project,

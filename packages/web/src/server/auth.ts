@@ -150,11 +150,10 @@ async function readKeyMetadata(
     const { getDb } = await import('./db.js');
     const { apikey } = await import('./schema.js');
     const { eq } = await import('drizzle-orm');
-    const rows = getDb()
+    const rows = await getDb()
       .select({ metadata: apikey.metadata })
       .from(apikey)
-      .where(eq(apikey.id, keyId))
-      .all();
+      .where(eq(apikey.id, keyId));
     const raw = rows[0]?.metadata;
     if (!raw) return undefined;
     if (typeof raw === 'object') return raw as Record<string, unknown>;

@@ -48,6 +48,16 @@ describe('parseDeployArgs — DeployOpts mapping', () => {
     expect(opts.tlsSecret).toBe('ns/sec');
   });
 
+  it('maps --database-url to DeployOpts', () => {
+    const opts = parseDeployArgs(['--database-url', 'postgresql://db.example/app']);
+    expect(opts.databaseUrl).toBe('postgresql://db.example/app');
+  });
+
+  it('maps --database-storage-class to DeployOpts', () => {
+    const opts = parseDeployArgs(['--database-storage-class', 'longhorn']);
+    expect(opts.databaseStorageClass).toBe('longhorn');
+  });
+
   it('https-port stays a number even when non-standard (microk8s NodePort pin)', () => {
     const opts = parseDeployArgs(['--https-port', '30443']);
     expect(opts.httpsPort).toBe(30443);
