@@ -91,6 +91,22 @@ tree. Adding an unrelated test file is enough to flip the order and surface it.
 the flag. Keep the `bun-version` pins in `.github/workflows/ci.yml` and
 `release.yml` in step with each other.
 
+**This is not web-specific.** `@percussionist/operator` runs with `--isolate` for
+the same reason, after it failed on CI exactly this way: `run-key-client.test.ts`
+registers `mock.module('./config.js', () => ({ WEB_AUTH_TOKEN, WEB_STATS_URL }))`,
+and on the CI runner's file order that file runs *second*, so all 12 later files
+importing any other name from `config.js` died at link time with
+`SyntaxError: Export named 'INGRESS_ANNOTATIONS' not found`. The suite reported
+109 of its 352 tests and 12 errors; locally, in a different enumeration order,
+it passed 352/352.
+
+`@percussionist/manager-controller` (7 files) and `@percussionist/dispatcher`
+(1 file) still run **without** `--isolate` while using `mock.module`, including
+partial stubs of `@percussionist/kube`. They are green today, but they carry the
+same exposure: a new test file, or a different runner filesystem, is enough to
+flip the order and break them. Add `--isolate` when touching those suites rather
+than adding a third cross-file mock.
+
 `tests/setup.ts` must install happy-dom's `document` **before** loading
 `@testing-library/jest-dom`. `@testing-library/dom` freezes `screen` at
 module-eval time (`typeof document !== 'undefined' && document.body`); if
