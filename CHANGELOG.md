@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.3.0] - 2026-09-27
+
+### <!-- 0 -->🚀 Features
+
+- Move web and memory storage to PostgreSQL _(db)_
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Isolate the test suite so partial config mocks cannot leak _(operator)_
+- Substitute database storage class into the manifest _(cli)_
 ## [v0.2.32] - 2026-09-21
 
 ### <!-- 0 -->🚀 Features
@@ -43,6 +53,10 @@ All notable changes to Percussionist are documented here.
 
 - Add deterministic PR-stage scope-change wiring test _(e2e)_
 - Preload the React test setup via bunfig _(web)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.2.32
 ## [v0.2.31] - 2026-09-20
 
 ### <!-- 0 -->🚀 Features
