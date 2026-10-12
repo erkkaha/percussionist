@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.3.1] - 2026-10-12
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Bound health-check attempts so a stalled probe cannot stall startup _(dispatcher)_
 ## [v0.3.0] - 2026-09-27
 
 ### <!-- 0 -->🚀 Features
@@ -11,6 +16,10 @@ All notable changes to Percussionist are documented here.
 
 - Isolate the test suite so partial config mocks cannot leak _(operator)_
 - Substitute database storage class into the manifest _(cli)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.3.0
 ## [v0.2.32] - 2026-09-21
 
 ### <!-- 0 -->🚀 Features
