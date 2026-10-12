@@ -194,4 +194,39 @@ describe('waitForHealthy', () => {
     };
     await withFetchStub(handler, () => waitForHealthy(1000, () => shuttingDown, pollSleep));
   });
+
+  it('bounds each stalled attempt so one hung request cannot outlive the deadline', async () => {
+    // Mirrors the real startup race: opencode accepts the connection before it
+    // starts serving, so the request never settles until it is aborted.
+    let calls = 0;
+    const handler: FetchHandler = (_url, init) => {
+      calls += 1;
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal) {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }
+      });
+    };
+    const start = Date.now();
+    await expect(
+      withFetchStub(handler, () => waitForHealthy(2500, () => false, pollSleep)),
+    ).rejects.toThrow(/did not become healthy within 2500ms/);
+    // First attempt is cut at the 2s per-attempt cap, then the remaining budget
+    // drives a second (also bounded) attempt.
+    expect(calls).toBeGreaterThan(1);
+    // Crucially, the call ends near the deadline, not undici's ~300s default.
+    expect(Date.now() - start).toBeLessThan(8000);
+  });
+
+  it('surfaces the fetch error cause so transport failures are diagnosable', async () => {
+    const handler: FetchHandler = () => {
+      const e = new Error('fetch failed') as Error & { cause?: unknown };
+      e.cause = new Error('UND_ERR_HEADERS_TIMEOUT');
+      throw e;
+    };
+    await expect(
+      withFetchStub(handler, () => waitForHealthy(50, () => false, pollSleep)),
+    ).rejects.toThrow(/cause: Error: UND_ERR_HEADERS_TIMEOUT/);
+  });
 });

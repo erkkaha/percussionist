@@ -161,9 +161,32 @@ export async function fetchMessages(sessionID: string): Promise<RawMessage[]> {
   }
 }
 
+// Per-attempt cap for health probes. opencode binds :4096 and logs
+// "server listening" ~1s AFTER the dispatcher's first poll (the two containers
+// start together). A connection opened during that window can be accepted but
+// never answered, and undici's default headersTimeout is 300s — longer than
+// waitForHealthy's whole budget. Without a per-attempt cap, one stalled request
+// starves the deadline check and turns a recoverable startup race into a
+// multi-minute run failure. /global/health answers in single-digit ms once the
+// server is serving, so 2s is generous.
+const HEALTH_ATTEMPT_TIMEOUT_MS = 2_000;
+
+// Node's fetch reports every transport failure as a bare "TypeError: fetch
+// failed"; the discriminating detail (UND_ERR_HEADERS_TIMEOUT, ECONNREFUSED,
+// ...) lives on `.cause`. Surface it so failures are diagnosable.
+function describeFetchError(e: unknown): string {
+  if (e && typeof e === 'object') {
+    const cause = (e as { cause?: unknown }).cause;
+    if (cause) return `${String(e)} (cause: ${String(cause)})`;
+  }
+  return String(e);
+}
+
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE_URL}/global/health`);
+    const res = await fetch(`${BASE_URL}/global/health`, {
+      signal: AbortSignal.timeout(HEALTH_ATTEMPT_TIMEOUT_MS),
+    });
     if (res.ok) {
       const body = (await res.json()) as { healthy?: boolean; version?: string };
       return !!body.healthy;
@@ -182,8 +205,14 @@ export async function waitForHealthy(
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown = null;
   while (Date.now() < deadline && !shuttingDown()) {
+    // Cap each attempt at the smaller of the per-attempt budget and whatever
+    // time remains, so a stalled connection can never outlive the deadline and
+    // the loop always gets to retry.
+    const attemptMs = Math.max(1, Math.min(HEALTH_ATTEMPT_TIMEOUT_MS, deadline - Date.now()));
     try {
-      const res = await fetch(`${BASE_URL}/global/health`);
+      const res = await fetch(`${BASE_URL}/global/health`, {
+        signal: AbortSignal.timeout(attemptMs),
+      });
       if (res.ok) {
         const body = (await res.json()) as { healthy?: boolean; version?: string };
         if (body.healthy) return;
@@ -197,6 +226,6 @@ export async function waitForHealthy(
   }
   if (shuttingDown()) return;
   throw new Error(
-    `opencode server did not become healthy within ${timeoutMs}ms: ${String(lastErr)}`,
+    `opencode server did not become healthy within ${timeoutMs}ms: ${describeFetchError(lastErr)}`,
   );
 }
