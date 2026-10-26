@@ -1,11 +1,21 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.3.2] - 2026-10-26
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Honor ClusterSettings runner pin in review and PR-feedback runs _(manager)_
+- Defer pod creation while a same-name cleanup job is running _(operator)_
 ## [v0.3.1] - 2026-10-12
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Bound health-check attempts so a stalled probe cannot stall startup _(dispatcher)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.3.1
 ## [v0.3.0] - 2026-09-27
 
 ### <!-- 0 -->🚀 Features
