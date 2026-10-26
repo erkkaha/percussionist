@@ -198,6 +198,11 @@ spec:
               value: percussionist
             - name: RUNNER_IMAGE_DEFAULT
               value: ghcr.io/erkkaha/percussionist/runner-opencode:latest
+            # Runner image for the claude engine. Pinned to the release tag in
+            # published manifests; without it the operator falls back to a
+            # floating :latest that nodes never re-pull (IfNotPresent).
+            - name: CLAUDE_RUNNER_IMAGE
+              value: ghcr.io/erkkaha/percussionist/runner-claude:latest
             - name: DISPATCHER_IMAGE
               value: ghcr.io/erkkaha/percussionist/dispatcher:latest
             - name: DISPATCHER_SERVICE_ACCOUNT

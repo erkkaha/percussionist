@@ -27,6 +27,33 @@ describe('resolveRunnerSpec', () => {
     expect(resolveRunnerSpec(undefined, 'claude').baseUrlEnvVar).toBe('OPENCODE_BASE_URL');
   });
 
+  // CLAUDE_RUNNER_DEFAULTS.image is a floating `:latest` pulled IfNotPresent;
+  // the operator's release-pinned CLAUDE_RUNNER_IMAGE has to replace it.
+  test('claude engine uses the operator-pinned image', () => {
+    const pinned = 'ghcr.io/erkkaha/percussionist/runner-claude:v9.9.9';
+    const spec = resolveRunnerSpec(undefined, 'claude', pinned);
+    expect(spec.image).toBe(pinned);
+    expect(spec.command).toEqual(CLAUDE_RUNNER_DEFAULTS.command);
+  });
+
+  test('ClusterSettings runnerAdapter image still wins over the pinned claude image', () => {
+    const cs = {
+      spec: { runnerAdapter: { image: 'registry.internal/runner:v9' } },
+    } as Parameters<typeof resolveRunnerSpec>[0];
+    const spec = resolveRunnerSpec(
+      cs,
+      'claude',
+      'ghcr.io/erkkaha/percussionist/runner-claude:v9.9.9',
+    );
+    expect(spec.image).toBe('registry.internal/runner:v9');
+  });
+
+  test('the pinned claude image does not leak into the opencode engine', () => {
+    expect(resolveRunnerSpec(undefined, 'opencode', 'x/runner-claude:v1')).toEqual(
+      OPENCODE_RUNNER_DEFAULTS,
+    );
+  });
+
   test('ClusterSettings overrides layer over the engine defaults', () => {
     const cs = {
       spec: { runnerAdapter: { image: 'registry.internal/runner:v9' } },

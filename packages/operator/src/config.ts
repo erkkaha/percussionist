@@ -1,5 +1,7 @@
 // config.ts — operator runtime configuration from environment variables.
 
+import { CLAUDE_RUNNER_DEFAULTS } from '@percussionist/api';
+
 const NAMESPACE = process.env.PERCUSSIONIST_NAMESPACE ?? 'percussionist';
 // The namespace where the operator itself is deployed and where shared
 // ConfigMaps (e.g. opencode-config) live.  Defaults to "percussionist" and
@@ -37,6 +39,13 @@ try {
 } catch {
   // ignore malformed value
 }
+
+// Image for runs on the claude engine. The manifests set this to a ghcr
+// `:latest` reference that the release pipeline rewrites to the release tag, the
+// same as RUNNER_IMAGE_DEFAULT. The fallback is the floating `:latest` from
+// CLAUDE_RUNNER_DEFAULTS, which run pods pull IfNotPresent — so without the env
+// a node keeps running whichever runner-claude build it cached first.
+const CLAUDE_RUNNER_IMAGE = process.env.CLAUDE_RUNNER_IMAGE ?? CLAUDE_RUNNER_DEFAULTS.image;
 
 // Memory / embedding service defaults.
 const MEMORY_SERVICE_IMAGE =
@@ -99,6 +108,7 @@ function positiveIntervalMs(value: string | undefined, fallback: number): number
 
 export {
   ALLOW_PRIVILEGED_SIDECARS,
+  CLAUDE_RUNNER_IMAGE,
   CLUSTER_SETTINGS_RESYNC_INTERVAL_MS,
   DEFAULT_STORAGE_ACCESS_MODE,
   DEFAULT_STORAGE_CLASS,

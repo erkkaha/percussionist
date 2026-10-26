@@ -8,6 +8,7 @@ import {
   type RunnerImageSpec,
   runnerDefaultsFor,
 } from '@percussionist/api';
+import { CLAUDE_RUNNER_IMAGE } from '../config.js';
 
 /**
  * Returns the effective RunnerImageSpec for this run.
@@ -17,9 +18,18 @@ import {
  * engine-independent by design: a cluster that pins a custom runner image gets
  * it whichever engine is selected, which is what lets air-gapped registries
  * work without per-engine configuration.
+ *
+ * The claude engine's baseline image is the operator's CLAUDE_RUNNER_IMAGE
+ * (release-pinned by the manifests) rather than the floating `:latest` in
+ * CLAUDE_RUNNER_DEFAULTS.
  */
-export function resolveRunnerSpec(cs?: ClusterSettings, engine?: RunnerEngine): RunnerImageSpec {
-  const defaults = runnerDefaultsFor(engine);
+export function resolveRunnerSpec(
+  cs?: ClusterSettings,
+  engine?: RunnerEngine,
+  claudeImage: string = CLAUDE_RUNNER_IMAGE,
+): RunnerImageSpec {
+  const base = runnerDefaultsFor(engine);
+  const defaults = engine === 'claude' ? { ...base, image: claudeImage } : base;
   const override = cs?.spec?.runnerAdapter;
   if (!override) return defaults;
   return {
