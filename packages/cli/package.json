@@ -21,7 +21,7 @@
     "@percussionist/api": "workspace:*",
     "@percussionist/kube": "workspace:*",
     "commander": "15.0.0",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {}
 }
