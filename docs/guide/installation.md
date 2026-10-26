@@ -54,10 +54,11 @@ A new PostgreSQL installation starts with an empty schema. Data in the old
 SQLite files is **not** copied automatically — there is no importer — so
 `stats`, `usageDaily` and per-project `memories` start empty. The old PVC is
 still mounted by nothing: nothing reads it, and `beatctl deploy --down` does not
-delete it, so it can be copied from before you reclaim the storage. Note that a
-Flux-managed install prunes resources it no longer tracks, which does not apply
-here (the PVC was never part of a Flux release), but do not run `kubectl delete
-pvc` until you have copied what you need.
+delete it, so it can be copied from before you reclaim the storage. Do not run
+`kubectl delete pvc` until you have copied what you need. A Flux-managed install
+is different: the PVC was part of the v0.2.x release, so Flux prunes it on the
+upgrade — retain its PersistentVolume first, as described in
+[GitOps upgrades → Crossing v0.3.0](/guide/gitops#crossing-v0-3-0).
 
 ## Manifests
 

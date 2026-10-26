@@ -88,6 +88,57 @@ flux reconcile source oci percussionist
 Rollback is the same command with an earlier tag — which the direct-patch path
 has no equivalent for, since it has no record of where it came from.
 
+### Crossing v0.3.0 (SQLite → PostgreSQL) {#crossing-v0-3-0}
+
+v0.3.0 moved web and memory storage to PostgreSQL. An install that is on
+v0.2.x under Flux needs three steps **before** the tag moves; the dashboard
+Upgrade button does none of them, and the direct-patch path cannot cross this
+release at all (it only swaps images, while the new web image needs
+`DATABASE_URL` and a database to connect to — use `beatctl deploy` there).
+
+1. **Create the `percussionist-db` Secret** (see
+   [Installation → Database](/guide/installation#database)). The web
+   Deployment and the bundled PostgreSQL StatefulSet both reference it with
+   `optional: false`, so without it neither pod starts.
+
+2. **Keep the old SQLite volume.** The `percussionist-web-db-v3` PVC was part
+   of the v0.2.x manifests, so Flux owns it, and v0.3.0 dropped it — the first
+   reconcile at the new tag prunes it, and with the usual `Delete` reclaim
+   policy the volume goes with it. Annotating the PVC with
+   `kustomize.toolkit.fluxcd.io/prune: disabled` does **not** help: Flux strips
+   annotations it did not apply on its next reconcile, before the tag change
+   lands. Retain the PersistentVolume instead, which Flux never touches:
+
+   ```bash
+   PV=$(kubectl -n percussionist get pvc percussionist-web-db-v3 -o jsonpath='{.spec.volumeName}')
+   kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+   ```
+
+   The PVC is still deleted; the PV is left `Released` with its data, ready to
+   be bound by a new claim for copy-out. Per-project memory databases live on
+   each project's data PVC (`/data/memory/vectors.db`) and are not affected.
+
+3. **Switch the web Deployment to `Recreate` by hand.** v0.3.0 sets
+   `strategy.type: Recreate` on it, but the live object still carries the
+   defaulted `strategy.rollingUpdate` from v0.2.x. Flux uses server-side apply,
+   which does not remove a field it never owned (`rollingUpdate: null` in the
+   manifest does not help either), so the Kustomization fails its dry-run with
+   `spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy
+   type is 'Recreate'` and nothing at the new tag is applied:
+
+   ```bash
+   kubectl -n percussionist patch deploy percussionist-web --type=json -p \
+     '[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]'
+   ```
+
+   A plain `kubectl apply` (the direct `beatctl deploy` path) merges this
+   change on its own and needs no patch.
+
+Then upgrade as above. Expect the web and memory-service pods to restart a few
+times with `ECONNREFUSED ... :5432` while PostgreSQL runs its first-boot
+initialisation; they settle once it accepts connections. Stats, usage history,
+dashboard logins and project memories start empty — there is no importer.
+
 ## Staying on demand
 
 The OCIRepository pins an exact `tag:`. Flux still reconciles on its interval,
