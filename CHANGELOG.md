@@ -1,12 +1,27 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.3.3] - 2026-10-26
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Pin the claude engine runner image to the release tag _(operator)_
+- Offer the current Claude models for the claude-code engine _(web)_
+- Bump claude-agent-sdk 0.3.241 → 0.3.303 _(runner-claude)_
+
+### <!-- 3 -->📚 Documentation
+
+- Document the Flux upgrade path across v0.3.0 _(gitops)_
 ## [v0.3.2] - 2026-10-26
 
 ### <!-- 1 -->🐛 Bug Fixes
 
 - Honor ClusterSettings runner pin in review and PR-feedback runs _(manager)_
 - Defer pod creation while a same-name cleanup job is running _(operator)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.3.2
 ## [v0.3.1] - 2026-10-12
 
 ### <!-- 1 -->🐛 Bug Fixes
