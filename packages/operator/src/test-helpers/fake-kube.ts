@@ -122,7 +122,7 @@ const NETWORKING_METHODS = [
   'deleteNamespacedIngress',
 ] as const;
 
-const BATCH_METHODS = ['createNamespacedJob'] as const;
+const BATCH_METHODS = ['createNamespacedJob', 'readNamespacedJob'] as const;
 
 /** Loose view of a method spy — avoids leaking `any` through the public surface. */
 interface MethodSpy {

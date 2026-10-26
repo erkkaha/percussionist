@@ -13,6 +13,7 @@ import {
   TERMINAL_PHASES,
 } from '@percussionist/api';
 import { gitUrlHash, isNotFoundError, makeNodeApiClient } from '@percussionist/kube';
+import { cleanupJobName } from './cleanup-job-name.js';
 import { co, kc, NAMESPACE } from './reconciler.js';
 
 const batchV1 = makeNodeApiClient(kc, BatchV1Api);
@@ -138,11 +139,7 @@ export function buildCleanupJob(run: Run) {
 
   scriptLines.push('echo "[cleanup-ttl] done"');
 
-  const jobName = `cleanup-ttl-${runName}`
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .slice(0, 63)
-    .replace(/-+$/, '');
+  const jobName = cleanupJobName(runName);
 
   return {
     apiVersion: 'batch/v1',

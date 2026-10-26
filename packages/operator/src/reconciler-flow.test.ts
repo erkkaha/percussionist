@@ -127,6 +127,7 @@ function happyPathScript(overrides: Partial<FakeKubeScript> = {}): FakeKubeScrip
     readNamespacedPersistentVolumeClaim: { error: notFound() },
     createNamespacedPersistentVolumeClaim: { value: {} },
     readNamespacedPod: { error: notFound() },
+    readNamespacedJob: { error: notFound() }, // no cleanup job in flight for this name
     createNamespacedPod: { value: pod('Pending') },
     patchNamespacedCustomObjectStatus: { value: {} },
     ...overrides,
@@ -192,6 +193,7 @@ const CREATE_SEQUENCE = [
   'readNamespacedPersistentVolumeClaim',
   'createNamespacedPersistentVolumeClaim',
   'readNamespacedPod',
+  'readNamespacedJob', // cleanup-job guard (404 → proceed)
   'createNamespacedPod',
 ];
 
@@ -248,6 +250,7 @@ const reconcileCases: ReconcileCase[] = [
       'readNamespacedPersistentVolumeClaim',
       'createNamespacedPersistentVolumeClaim',
       'readNamespacedPod',
+      'readNamespacedJob',
       'createNamespacedPod',
       'patchNamespacedCustomObjectStatus', // pod created
       'patchNamespacedCustomObjectStatus', // pod phase: Pending
@@ -396,9 +399,10 @@ const reconcileCases: ReconcileCase[] = [
       createNamespacedPod: { error: alreadyExists('pods', 'run-4') },
     }),
     expectedMethods: [
-      // CREATE_SEQUENCE.slice(0, 13) ends with the initial readNamespacedPod
-      // probe (404), so the pod create + re-read are appended explicitly.
-      ...CREATE_SEQUENCE.slice(0, 13),
+      // CREATE_SEQUENCE.slice(0, 14) ends with the cleanup-job probe that follows
+      // the initial readNamespacedPod 404, so the pod create + re-read are
+      // appended explicitly.
+      ...CREATE_SEQUENCE.slice(0, 14),
       'createNamespacedPod', // raced by another reconcile → already exists
       'readNamespacedPod', // re-read the existing pod
       'patchNamespacedCustomObjectStatus',
@@ -451,7 +455,7 @@ const reconcileCases: ReconcileCase[] = [
     }),
     rejectsWith: 500,
     expectedMethods: [
-      ...CREATE_SEQUENCE.slice(0, CREATE_SEQUENCE.length - 2), // up to the PVC create
+      ...CREATE_SEQUENCE.slice(0, CREATE_SEQUENCE.length - 3), // up to the PVC create
       'patchNamespacedCustomObjectStatus',
     ],
     expectedPatches: [
@@ -1187,5 +1191,70 @@ describe('safeReconcileProject()', () => {
     } finally {
       fake.restore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cleanup-job guard: a Run recreated under a deterministic name (buildgen,
+// merge, PR-open) must not start workspace-init while the cleanup Job spawned
+// by its deleted predecessor is still reaping that name's worktree.
+
+describe('reconcile() cleanup-job guard', () => {
+  let mintKeySpy: ReturnType<typeof spyOn>;
+  let revokeKeySpy: ReturnType<typeof spyOn>;
+  let fake: FakeKubeInstaller | undefined;
+
+  beforeEach(() => {
+    const state = reconciler.__queueStateForTests();
+    state.queue.length = 0;
+    state.pending.clear();
+    state.processing.clear();
+    state.dirty.clear();
+    state.seen.clear();
+    mintKeySpy = spyOn(runKeyClient, 'mintRunKey').mockResolvedValue(null);
+    revokeKeySpy = spyOn(runKeyClient, 'revokeRunKey').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    mintKeySpy.mockRestore();
+    revokeKeySpy.mockRestore();
+    fake?.restore();
+  });
+
+  const activeJob = { status: { active: 1 } };
+  const completeJob = {
+    status: { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] },
+  };
+
+  it('defers pod creation (rejects → requeue) while the predecessor cleanup Job is running', async () => {
+    fake = installFakeKube(happyPathScript({ readNamespacedJob: { value: activeJob } }));
+    await expect(reconciler.reconcile(makeRun('run-8'))).rejects.toThrow(
+      /cleanup job cleanup-ttl-run-8 still running/,
+    );
+    const methods = fake.calls.map((c) => c.method);
+    expect(methods).toEqual(CREATE_SEQUENCE.slice(0, 14));
+    expect(methods).not.toContain('createNamespacedPod');
+    expect(mintKeySpy).not.toHaveBeenCalled();
+  });
+
+  it('proceeds once the cleanup Job has finished (Complete condition, still within its TTL)', async () => {
+    fake = installFakeKube(happyPathScript({ readNamespacedJob: { value: completeJob } }));
+    await reconciler.reconcile(makeRun('run-9'));
+    expect(fake.calls.map((c) => c.method)).toContain('createNamespacedPod');
+  });
+
+  it('fails open when the Job API errors (anything but 404)', async () => {
+    fake = installFakeKube(
+      happyPathScript({ readNamespacedJob: { error: serverError('batch api down') } }),
+    );
+    await reconciler.reconcile(makeRun('run-10'));
+    expect(fake.calls.map((c) => c.method)).toContain('createNamespacedPod');
+  });
+
+  it('probes the Job under the deterministic cleanup name', async () => {
+    fake = installFakeKube(happyPathScript());
+    await reconciler.reconcile(makeRun('run-11'));
+    const probe = fake.calls.find((c) => c.method === 'readNamespacedJob');
+    expect(probe?.args[0]).toMatchObject({ name: 'cleanup-ttl-run-11' });
   });
 });

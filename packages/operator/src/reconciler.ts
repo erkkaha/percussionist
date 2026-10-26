@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import {
   AppsV1Api,
+  BatchV1Api,
   CoreV1Api,
   CustomObjectsApi,
   KubeConfig,
@@ -36,6 +37,7 @@ import {
   ValidationError,
 } from './adapters/opencode-config.js';
 import { resolveAgents } from './agent-resolver.js';
+import { cleanupJobName } from './cleanup-job-name.js';
 import {
   ideDeploymentName,
   ideIngressName,
@@ -84,6 +86,52 @@ const core = makeNodeApiClient(kc, CoreV1Api);
 const apps = makeNodeApiClient(kc, AppsV1Api);
 const co = makeNodeApiClient(kc, CustomObjectsApi);
 const networking = makeNodeApiClient(kc, NetworkingV1Api);
+const batch = makeNodeApiClient(kc, BatchV1Api);
+
+// ---------------------------------------------------------------------------
+// Cleanup-job guard
+
+/** True once a batch/v1 Job has a terminal condition or a settled pod count. */
+function isJobFinished(job: {
+  status?: {
+    succeeded?: number;
+    failed?: number;
+    conditions?: Array<{ type?: string; status?: string }>;
+  };
+}): boolean {
+  const st = job.status;
+  if (!st) return false;
+  if ((st.succeeded ?? 0) > 0 || (st.failed ?? 0) > 0) return true;
+  return (st.conditions ?? []).some(
+    (c) => (c.type === 'Complete' || c.type === 'Failed') && c.status === 'True',
+  );
+}
+
+/**
+ * Name of a still-running worktree cleanup Job for a previous Run that had this
+ * Run's name, or undefined when none is in flight.
+ *
+ * Deleting a Run spawns `cleanup-ttl-<run>` (ttl.ts), which rm -rf's the run's
+ * worktree, prunes the mirror's worktree metadata and repacks its objects. The
+ * manager recreates buildgen, merge and PR-open runs under the SAME deterministic
+ * name straight after deleting a Failed predecessor (effects.ts), so without this
+ * check the new pod's workspace-init raced that Job on the shared data PVC: the
+ * worktree it had just added was removed underneath it and `git worktree add`
+ * died with a bare exit 128. Fail-open on anything but a clean 404 — the Job API
+ * being unreachable must not block runs.
+ */
+export async function activeCleanupJobFor(runName: string): Promise<string | undefined> {
+  const jobName = cleanupJobName(runName);
+  try {
+    const job = await batch.readNamespacedJob({ name: jobName, namespace: NAMESPACE });
+    return isJobFinished(job) ? undefined : jobName;
+  } catch (e) {
+    if (!isNotFoundError(e)) {
+      err(`cleanup job probe for ${runName} failed (proceeding):`, errorMessage(e));
+    }
+    return undefined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Status writer
@@ -788,6 +836,17 @@ export async function reconcile(run: Run): Promise<void> {
   try {
     pod = await core.readNamespacedPod({ name: podName(run), namespace: ns });
   } catch {
+    // A previous Run of this name may still be having its worktree reaped; let
+    // that finish before workspace-init touches the same paths. Throwing here
+    // requeues the run after ERROR_REQUEUE_DELAY_MS.
+    const cleanupJob = await activeCleanupJobFor(name);
+    if (cleanupJob) {
+      log(
+        `deferring pod for ${ns}/${name}: cleanup job ${cleanupJob} for a previous run of that name is still running`,
+      );
+      throw new Error(`cleanup job ${cleanupJob} still running for ${ns}/${name}; requeued`);
+    }
+
     // Mint the run's stats key just before the pod is created, so its lifetime
     // tracks the pod's as closely as possible. Returns null if the web server is
     // unreachable or minting is not configured, in which case renderPod falls
