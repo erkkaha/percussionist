@@ -300,10 +300,13 @@ export async function buildReviewRun(
   allTasks: Task[] = [],
 ): Promise<Run> {
   const clusterSettings = await getOptionalClusterSettings('buildReviewRun');
+  // Honor the ClusterSettings runner pin like buildgen does: leaving image
+  // undefined falls through to DEFAULT_RUNNER_IMAGE (`runner-opencode:latest`),
+  // which with IfNotPresent is whatever stale build the node last pulled.
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
-      image: undefined,
-      resources: undefined,
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
     },
     secrets: clusterSettings?.spec?.secrets,
   });
@@ -437,10 +440,13 @@ export async function buildPrFeedbackEvalRun(
   allTasks: Task[] = [],
 ): Promise<Run> {
   const clusterSettings = await getOptionalClusterSettings('buildPrFeedbackEvalRun');
+  // Honor the ClusterSettings runner pin like buildgen does: leaving image
+  // undefined falls through to DEFAULT_RUNNER_IMAGE (`runner-opencode:latest`),
+  // which with IfNotPresent is whatever stale build the node last pulled.
   const resolved = resolveRunConfig(project.spec, undefined, undefined, {
     runner: {
-      image: undefined,
-      resources: undefined,
+      image: clusterSettings?.spec?.runner?.image,
+      resources: clusterSettings?.spec?.runner?.resources,
     },
     secrets: clusterSettings?.spec?.secrets,
   });
