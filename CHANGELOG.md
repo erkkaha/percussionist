@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Percussionist are documented here.
+## [v0.3.4] - 2026-10-31
+
+### <!-- 0 -->🚀 Features
+
+- Upgrade OpenCode SDK and plugin to 2.2.2 _(runner-opencode)_
 ## [v0.3.3] - 2026-10-26
 
 ### <!-- 1 -->🐛 Bug Fixes
@@ -12,6 +17,10 @@ All notable changes to Percussionist are documented here.
 ### <!-- 3 -->📚 Documentation
 
 - Document the Flux upgrade path across v0.3.0 _(gitops)_
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Release v0.3.3
 ## [v0.3.2] - 2026-10-26
 
 ### <!-- 1 -->🐛 Bug Fixes
