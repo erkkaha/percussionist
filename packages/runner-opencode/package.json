@@ -19,8 +19,8 @@
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",
-    "@opencode/plugin": "2.0.10",
-    "@opencode/sdk": "2.0.10",
+    "@opencode/plugin": "2.2.2",
+    "@opencode/sdk": "2.2.2",
     "hono": "4.13.7",
     "yaml": "2.9.0"
   },

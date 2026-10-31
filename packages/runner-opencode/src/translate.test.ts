@@ -179,6 +179,60 @@ describe('translateMessage', () => {
     ]);
   });
 
+  test('2.2 ToolStateError surfaces state.error.message and execute metadata.error marks status=error', () => {
+    const m: V2Message = {
+      ...toolTurn,
+      content: [
+        {
+          type: 'tool',
+          id: 'call_err',
+          name: 'read',
+          state: {
+            status: 'error',
+            input: { path: '/missing.ts' },
+            error: { type: 'tool.execution', message: 'File not found: /missing.ts' },
+          },
+        },
+        {
+          type: 'tool',
+          id: 'call_cm_err',
+          name: 'execute',
+          state: {
+            status: 'completed',
+            input: { code: 'throw new Error("boom")' },
+            content: [{ type: 'text', text: 'Error: boom' }],
+            metadata: { toolCalls: [], error: true },
+          },
+        },
+      ],
+    };
+    const tools = translateMessage(SID, m)?.parts.filter((p) => p.type === 'tool');
+    expect(tools).toEqual([
+      {
+        type: 'tool',
+        tool: 'read',
+        callID: 'call_err',
+        state: {
+          status: 'error',
+          input: { path: '/missing.ts' },
+          output: 'File not found: /missing.ts',
+          time: { start: undefined, end: undefined },
+        },
+      },
+      {
+        type: 'tool',
+        tool: 'execute',
+        callID: 'call_cm_err',
+        state: {
+          status: 'error',
+          input: { code: 'throw new Error("boom")' },
+          output: 'Error: boom',
+          time: { start: undefined, end: undefined },
+        },
+      },
+    ]);
+  });
+
   test('file tools synthesize a file part; task tools a subtask part', () => {
     const m: V2Message = {
       ...toolTurn,
@@ -258,6 +312,63 @@ describe('translateMessages', () => {
     const a: V2Message = { ...userMsg, id: 'a', time: { created: 5 } };
     const b: V2Message = { ...userMsg, id: 'b', time: { created: 5 } };
     expect(translateMessages(SID, [a, b]).map((m) => m.info.id)).toEqual(['a', 'b']);
+  });
+
+  test('2.2 idle(interrupted) marks in-flight assistant message as MessageAbortedError', () => {
+    const inFlight: V2Message = {
+      id: 'msg_asst_1',
+      time: { created: 10 },
+      type: 'assistant',
+      agent: 'build',
+      content: [{ type: 'text', text: 'partial' }],
+    };
+    const interruptedIdle: V2Message = {
+      id: 'msg_idle_1',
+      time: { created: 11 },
+      type: 'idle',
+      outcome: 'interrupted',
+    };
+    const out = translateMessages(SID, [
+      { ...userMsg, time: { created: 1 } },
+      inFlight,
+      interruptedIdle,
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[1]?.info.error).toEqual({
+      name: 'MessageAbortedError',
+      message: 'The operation was aborted.',
+    });
+  });
+
+  test('2.2 idle(failed) synthesizes an error assistant message when no step started, without duplicating step errors', () => {
+    const failedIdle: V2Message = {
+      id: 'msg_idle_err',
+      time: { created: 10 },
+      type: 'idle',
+      outcome: 'failed',
+      error: { type: 'model.unavailable', message: 'Model unavailable' },
+    };
+    // Case 1: failed before any assistant step started
+    const preStep = translateMessages(SID, [{ ...userMsg, time: { created: 1 } }, failedIdle]);
+    expect(preStep).toHaveLength(2);
+    expect(preStep[1]?.info.role).toBe('assistant');
+    expect(preStep[1]?.info.error).toEqual({
+      name: 'model.unavailable',
+      message: 'Model unavailable',
+    });
+
+    // Case 2: failed during a step (assistant message already carries the error)
+    const afterStep = translateMessages(SID, [
+      { ...userMsg, time: { created: 1 } },
+      { ...failedTurn, time: { created: 5, completed: 6 } },
+      failedIdle,
+    ]);
+    expect(afterStep).toHaveLength(2);
+    expect(afterStep[1]?.info.error).toEqual({
+      name: 'provider.auth',
+      message: "OpenCode's free tier can only be used from within OpenCode",
+      status: 403,
+    });
   });
 });
 
