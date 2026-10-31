@@ -18,6 +18,8 @@ minimumReleaseAge: 10080
 # the only consumer and pins exact versions, so the quarantine buys nothing there.
 minimumReleaseAgeExclude:
   - "@opencode/*"
+  - "@opentui/*"
+  - gitlab-ai-provider
 
 # Transitive high-severity advisories with patches available in-range.
 overrides:

@@ -71,7 +71,7 @@ export type TranscriptMessage = { info: MessageInfo; parts: Part[] };
 
 // ---------------------------------------------------------------------------
 // Loose views of the v2 payloads. Narrowed defensively rather than importing
-// the SDK schema types: the shapes below are what 2.0.10 actually emits, and a
+// the SDK schema types: the shapes below are what 2.2.2 actually emits, and a
 // field the SDK drops or renames should degrade to a missing part, not a type
 // error at build time in an unrelated package.
 
@@ -88,10 +88,13 @@ export type V2Part = {
     input?: unknown;
     output?: unknown;
     content?: unknown;
-    metadata?: { toolCalls?: V2ToolCall[]; truncated?: boolean; exit?: number } & Record<
-      string,
-      unknown
-    >;
+    error?: { type?: string; message?: string } | unknown;
+    metadata?: {
+      toolCalls?: V2ToolCall[];
+      truncated?: boolean;
+      exit?: number;
+      error?: boolean;
+    } & Record<string, unknown>;
   };
   time?: { created?: number; ran?: number; completed?: number };
 };
@@ -100,6 +103,7 @@ export type V2Message = {
   id?: string;
   sessionID?: string;
   type?: string;
+  outcome?: 'succeeded' | 'failed' | 'interrupted' | string;
   time?: { created?: number; completed?: number; streamed?: number };
   text?: string;
   agent?: string;
@@ -174,8 +178,14 @@ function synthesizeFor(tool: string, callID: string | undefined, input: unknown)
 function translateToolPart(part: V2Part): Part[] {
   const name = part.name ?? 'unknown';
   const state = part.state ?? {};
-  const status = mapStatus(state.status);
-  const output = contentToText(state.content) ?? state.output;
+  const status = state.metadata?.error === true ? 'error' : mapStatus(state.status);
+  const errorText =
+    state.error &&
+    typeof state.error === 'object' &&
+    typeof (state.error as { message?: unknown }).message === 'string'
+      ? (state.error as { message: string }).message
+      : undefined;
+  const output = contentToText(state.content) ?? state.output ?? errorText;
   const time = {
     start: part.time?.ran ?? part.time?.created,
     end: part.time?.completed,
@@ -298,17 +308,83 @@ export function translateMessage(sessionID: string, m: V2Message): TranscriptMes
 /**
  * Translate a whole session. Output is oldest-first regardless of input order,
  * because incrementalFlush in the dispatcher keeps a numeric cursor into it.
+ *
+ * In OpenCode 2.2+, terminal execution outcomes (`succeeded`, `failed`,
+ * `interrupted`) are recorded on an `idle` message appended at the end of the
+ * turn. Succeeded idle markers are dropped; `interrupted` and `failed` idle
+ * markers attach their error to the preceding assistant message (when it has
+ * none yet) or synthesize an error-bearing assistant message when the turn
+ * failed/aborted before `session.step.started` created one.
  */
 export function translateMessages(sessionID: string, messages: V2Message[]): TranscriptMessage[] {
-  return [...messages]
+  const sorted = [...messages]
     .map((m, idx) => ({ m, idx }))
     .sort((a, b) => {
       const ta = a.m.time?.created ?? 0;
       const tb = b.m.time?.created ?? 0;
       return ta - tb || a.idx - b.idx;
     })
-    .map(({ m }) => translateMessage(sessionID, m))
-    .filter((m): m is TranscriptMessage => m !== undefined);
+    .map(({ m }) => m);
+
+  const out: TranscriptMessage[] = [];
+  for (const m of sorted) {
+    if (m.type === 'idle') {
+      if (m.outcome === 'interrupted') {
+        const abortErr = { name: 'MessageAbortedError', message: 'The operation was aborted.' };
+        const last = out.at(-1);
+        if (last?.info.role === 'assistant' && last.info.error === undefined) {
+          last.info.error = abortErr;
+        } else if (last?.info.role !== 'assistant') {
+          out.push({
+            info: {
+              id: m.id,
+              sessionID,
+              role: 'assistant',
+              time: { created: m.time?.created },
+              error: abortErr,
+            },
+            parts: [],
+          });
+        }
+      } else if (m.outcome === 'failed' || m.error !== undefined) {
+        const errObj = translateError(m.error) ?? {
+          name: 'error',
+          message: 'session execution failed',
+        };
+        const last = out.at(-1);
+        if (last?.info.role === 'assistant') {
+          if (last.info.error === undefined) {
+            last.info.error = errObj;
+          }
+        } else {
+          out.push({
+            info: {
+              id: m.id,
+              sessionID,
+              role: 'assistant',
+              time: { created: m.time?.created, completed: m.time?.created },
+              error: errObj,
+            },
+            parts: [
+              {
+                type: 'step-finish',
+                id: m.id ? `${m.id}-finish` : undefined,
+                messageID: m.id,
+                reason: 'error',
+                tokens: undefined,
+                cost: undefined,
+              },
+            ],
+          });
+        }
+      }
+      continue;
+    }
+
+    const translated = translateMessage(sessionID, m);
+    if (translated !== undefined) out.push(translated);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -60,6 +60,7 @@ type Subscriber = (event: V1Event) => void;
 const TERMINAL_EVENTS = new Set([
   'session.execution.succeeded',
   'session.execution.failed',
+  'session.execution.interrupted',
   'session.execution.idle',
 ]);
 /** Events after which the newest assistant message carries fresh usage. */
@@ -117,7 +118,7 @@ export class RunnerHost {
     return host;
   }
 
-  /** The SDK's own idea of its version; "unknown" for embedded hosts in 2.0.10. */
+  /** The SDK's own idea of its version; "unknown" for embedded hosts in 2.x. */
   async version(): Promise<string> {
     try {
       const info = await this.sdk.server.info();
@@ -165,7 +166,7 @@ export class RunnerHost {
   async messages(sessionID: string): Promise<TranscriptMessage[]> {
     const all: V2Message[] = [];
     let cursor: string | undefined;
-    // 2.0.10 pages message.list; walk it so long runs are not silently cut.
+    // v2 pages message.list; walk it so long runs are not silently cut.
     // The cursor encodes the order, and passing both is rejected.
     for (let page = 0; page < 200; page++) {
       let res: Awaited<ReturnType<typeof this.sdk.message.list>>;
@@ -394,6 +395,11 @@ export class RunnerHost {
             continue;
           }
           if (TERMINAL_EVENTS.has(type)) {
+            // Shutdown interrupts do not record an idle transition in v2.2;
+            // only user/superseded/inactivity interrupts park the session.
+            if (type === 'session.execution.interrupted' && ev.data?.reason === 'shutdown') {
+              continue;
+            }
             // Usage is final by now; flush it once more before parking so the
             // dispatcher's totals include the closing turn.
             const info = await this.latestAssistantInfo(sessionID, undefined);
